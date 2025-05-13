@@ -1,1 +1,4 @@
-setwifi.sh
+*.log
+*.tmp
+*.bak
+*.swp 
