@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#set -x 
 # Enable strict mode and verbose error handling at the top of the script
 set -euo pipefail
 IFS=$'\n\t'
@@ -8,14 +8,18 @@ IFS=$'\n\t'
 trap 'echo "[ERROR] Command failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 # Check for required commands at startup
-for cmd in nmcli iwconfig ethtool ip ping grep awk; do
+for cmd in nmcli iwconfig ethtool ip ping grep awk qrencode; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "[FATAL] Required command '$cmd' not found. Please install it before running this script." >&2
-    exit 1
+    if [ "$cmd" == "qrencode" ]; then
+      echo "[WARNING] Command '$cmd' not found. QR code generation will be skipped. Install with 'sudo apt install qrencode'." >&2
+    else
+      echo "[FATAL] Required command '$cmd' not found. Please install it before running this script." >&2
+      exit 1
+    fi
   fi
 done
 
-HOTSPOT_NAME="TEST-AP"
+HOTSPOT_NAME="WORK-HIVE_HOTSPOT"
 HOTSPOT_IP="192.168.100.1/24"
 WG_INTERFACE="wg0"
 VPN_DNS="1.1.1.1"
@@ -24,13 +28,37 @@ DNSMASQ_CONF="/etc/NetworkManager/dnsmasq.d/custom-dns.conf"
 DHCP_CONF="/etc/NetworkManager/dnsmasq.d/dhcp-options.conf"
 CONFIG_DIR="$HOME/.wifi_configs"
 
+# Derived Hotspot IP configurations
+HOTSPOT_GATEWAY_IP=$(echo "$HOTSPOT_IP" | cut -d'/' -f1)
+_HOTSPOT_CIDR_SUFFIX=$(echo "$HOTSPOT_IP" | cut -d'/' -f2)
+_HOTSPOT_SUBNET_PREFIX=$(echo "$HOTSPOT_GATEWAY_IP" | cut -d'.' -f1-3)
+HOTSPOT_SUBNET="${_HOTSPOT_SUBNET_PREFIX}.0/${_HOTSPOT_CIDR_SUFFIX}"
+
 print_help() {
   cat <<EOF
 Usage:
-  $0 --setup <interface> <mode> [ssid] [password] [config_name]
+  $0 --setup --interface <interface> --mode <mode> [--ssid <ssid>] [--password <password>] [--config_name <config_name>] [--wg_interface <wg_interface>] [--captive_mode <on|off|captive>]
       - Starts hotspot or connects as client
-      - mode: hotspot | client
-      - config_name: optional, custom name for this configuration
+      - --interface: network interface to use (e.g., wlan0)
+      - --mode: hotspot | client
+      - --ssid: (optional) Wi-Fi network name (SSID) to use or connect to
+      - --password: (optional) Wi-Fi password
+      - --config_name: (optional) custom name for this configuration
+      - --wg_interface: (optional) WireGuard interface to use (e.g., wg0)
+      - --captive_mode: (optional) captive portal mode: on, off, or captive
+      
+      Examples:
+        # Hotspot mode (SSID: hotspotone, Password: HotspotAccess123!)
+        $0 --setup --interface wlan0 --mode hotspot --ssid hotspotone --password 'HotspotAccess123!'
+
+        # Client mode (connect to Wi-Fi)
+        $0 --setup --interface wlan0 --mode client --ssid mywifi --password mywifipass
+
+        # Hotspot with WireGuard and captive mode enabled
+        $0 --setup --interface wlan0 --mode hotspot --ssid hotspotone --password 'HotspotAccess123!' --wg_interface wg0 --captive_mode on
+
+        # Client with custom config name
+        $0 --setup --interface wlan0 --mode client --ssid mywifi --password mywifipass --config_name workwifi
 
   $0 --device <action> [params]
       - Manage device internet access
@@ -62,8 +90,8 @@ Usage:
       - Run diagnostic checks for forwarding, NAT, and connections
       - Use "deep" to include tcpdump and verbose output
 
-  $0 --test | -t
-      - Test current connection status, including WireGuard connectivity
+  $0 status
+      - Show current connection status, hotspot details (SSID, Password, QR code), including WireGuard connectivity
 
   $0 --help
       - Show this help menu
@@ -134,11 +162,12 @@ enable_ip_forwarding() {
 }
 
 setup_wireguard_routing() {
-  echo "Setting up NAT and DNS routing..."
+  local target_wg_interface=$1
+  echo "Setting up NAT and DNS routing for $target_wg_interface..."
 
-  # Validate that WG_INTERFACE is set
-  if [ -z "$WG_INTERFACE" ]; then
-    echo "Error: WireGuard interface (WG_INTERFACE) is not set. Cannot proceed with NAT and DNS routing."
+  # Validate that target_wg_interface is set
+  if [ -z "$target_wg_interface" ]; then
+    echo "Error: No WireGuard interface provided to setup_wireguard_routing function."
     return 1
   fi
 
@@ -149,24 +178,24 @@ setup_wireguard_routing() {
   fi
 
   # Enable NAT for the hotspot subnet to the WireGuard interface
-  sudo iptables -t nat -C POSTROUTING -s 192.168.4.0/24 -o "$WG_INTERFACE" -j MASQUERADE 2>/dev/null \
-    || sudo iptables -t nat -A POSTROUTING -s 192.168.4.0/24 -o "$WG_INTERFACE" -j MASQUERADE
+  sudo iptables -t nat -C POSTROUTING -s "$HOTSPOT_SUBNET" -o "$target_wg_interface" -j MASQUERADE 2>/dev/null \
+    || sudo iptables -t nat -A POSTROUTING -s "$HOTSPOT_SUBNET" -o "$target_wg_interface" -j MASQUERADE
 
   # Allow forwarding from the hotspot interface to the WireGuard interface
-  sudo iptables -C FORWARD -i wlan0 -o "$WG_INTERFACE" -j ACCEPT 2>/dev/null \
-    || sudo iptables -A FORWARD -i wlan0 -o "$WG_INTERFACE" -j ACCEPT
+  sudo iptables -C FORWARD -i wlan0 -o "$target_wg_interface" -j ACCEPT 2>/dev/null \
+    || sudo iptables -A FORWARD -i wlan0 -o "$target_wg_interface" -j ACCEPT
 
   # Allow forwarding from the WireGuard interface to the hotspot interface for established connections
-  sudo iptables -C FORWARD -i "$WG_INTERFACE" -o wlan0 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
-    || sudo iptables -A FORWARD -i "$WG_INTERFACE" -o wlan0 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  sudo iptables -C FORWARD -i "$target_wg_interface" -o wlan0 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
+    || sudo iptables -A FORWARD -i "$target_wg_interface" -o wlan0 -m state --state ESTABLISHED,RELATED -j ACCEPT
 
   # Allow DNS traffic from the hotspot interface to the WireGuard interface
-  sudo iptables -C FORWARD -i wlan0 -o "$WG_INTERFACE" -p udp --dport 53 -j ACCEPT 2>/dev/null \
-    || sudo iptables -A FORWARD -i wlan0 -o "$WG_INTERFACE" -p udp --dport 53 -j ACCEPT
-  sudo iptables -C FORWARD -i wlan0 -o "$WG_INTERFACE" -p tcp --dport 53 -j ACCEPT 2>/dev/null \
-    || sudo iptables -A FORWARD -i wlan0 -o "$WG_INTERFACE" -p tcp --dport 53 -j ACCEPT
+  sudo iptables -C FORWARD -i wlan0 -o "$target_wg_interface" -p udp --dport 53 -j ACCEPT 2>/dev/null \
+    || sudo iptables -A FORWARD -i wlan0 -o "$target_wg_interface" -p udp --dport 53 -j ACCEPT
+  sudo iptables -C FORWARD -i wlan0 -o "$target_wg_interface" -p tcp --dport 53 -j ACCEPT 2>/dev/null \
+    || sudo iptables -A FORWARD -i wlan0 -o "$target_wg_interface" -p tcp --dport 53 -j ACCEPT
 
-  echo "NAT and DNS routing setup completed."
+  echo "NAT and DNS routing setup completed for $target_wg_interface."
 }
 
 write_dns_config() {
@@ -175,7 +204,7 @@ write_dns_config() {
   # Always use captive mode by default, redirecting to port 8080
   sudo tee "$DNSMASQ_CONF" > /dev/null <<EOF
 # Redirect all DNS queries to the hotspot IP on port 8080
-address=/#/192.168.4.1#8080
+address=/#/$HOTSPOT_GATEWAY_IP#8080
 
 # Allow these domains to resolve normally for better compatibility
 server=/googleapi.com/8.8.8.8
@@ -184,7 +213,7 @@ server=/apple.com/8.8.8.8
 server=/stripe.com/8.8.8.8
 
 # Special handling for Apple's captive portal detection
-address=/captive.apple.com/192.168.4.1#8080
+address=/captive.apple.com/$HOTSPOT_GATEWAY_IP#8080
 EOF
 
   # Configure specific domains to always resolve to the hotspot IP
@@ -192,8 +221,8 @@ EOF
   sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
   sudo tee /etc/NetworkManager/dnsmasq-shared.d/local-domains.conf > /dev/null <<EOF
 # Force specific domains to resolve to the hotspot IP
-address=/setip.io/192.168.4.1
-# address=/numfree.org/192.168.4.1
+address=/setip.io/$HOTSPOT_GATEWAY_IP
+# address=/numfree.org/$HOTSPOT_GATEWAY_IP
 EOF
 
   # Apply DNS bypass for authorized devices
@@ -460,16 +489,16 @@ select_config() {
 ensure_hairpin_nat() {
   echo "Ensuring hairpin NAT is in place for hotspot clients accessing $WG_PUBLIC_IP..."
    sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu  2>/dev/null \
-    || sudo iptables -t nat -C PREROUTING -i wlan0 -d $WG_PUBLIC_IP -p tcp --dport 443 -j DNAT --to-destination 192.168.4.1:443 2>/dev/null \
-    || sudo iptables -t nat -A PREROUTING -i wlan0 -d $WG_PUBLIC_IP -p tcp --dport 443 -j DNAT --to-destination 192.168.4.1:443
+    || sudo iptables -t nat -C PREROUTING -i wlan0 -d $WG_PUBLIC_IP -p tcp --dport 443 -j DNAT --to-destination "${HOTSPOT_GATEWAY_IP}:443" 2>/dev/null \
+    || sudo iptables -t nat -A PREROUTING -i wlan0 -d $WG_PUBLIC_IP -p tcp --dport 443 -j DNAT --to-destination "${HOTSPOT_GATEWAY_IP}:443"
 # Add a rule for HTTP (port 80)
-sudo iptables -t nat -C PREROUTING -i wlan0 -d $WG_PUBLIC_IP -p tcp --dport 80 -j DNAT --to-destination 192.168.4.1:80 2>/dev/null \
-  || sudo iptables -t nat -A PREROUTING -i wlan0 -d $WG_PUBLIC_IP -p tcp --dport 80 -j DNAT --to-destination 192.168.4.1:80
+sudo iptables -t nat -C PREROUTING --i wlan0 -d $WG_PUBLIC_IP -p tcp --dport 80 -j DNAT --to-destination "${HOTSPOT_GATEWAY_IP}:80" 2>/dev/null \
+  || sudo iptables -t nat -A PREROUTING -i wlan0 -d $WG_PUBLIC_IP -p tcp --dport 80 -j DNAT --to-destination "${HOTSPOT_GATEWAY_IP}:80"
 
-sudo iptables -t nat -C POSTROUTING -s 192.168.4.0/24 -d 192.168.4.1 -p tcp --dport 80 -j MASQUERADE 2>/dev/null \
-  || sudo iptables -t nat -A POSTROUTING -s 192.168.4.0/24 -d 192.168.4.1 -p tcp --dport 80 -j MASQUERADE
-  sudo iptables -t nat -C POSTROUTING -s 192.168.4.0/24 -d 192.168.4.1 -p tcp --dport 443 -j MASQUERADE 2>/dev/null \
-    || sudo iptables -t nat -A POSTROUTING -s 192.168.4.0/24 -d 192.168.4.1 -p tcp --dport 443 -j MASQUERADE
+sudo iptables -t nat -C POSTROUTING -s "$HOTSPOT_SUBNET" -d "$HOTSPOT_GATEWAY_IP" -p tcp --dport 80 -j MASQUERADE 2>/dev/null \
+  || sudo iptables -t nat -A POSTROUTING -s "$HOTSPOT_SUBNET" -d "$HOTSPOT_GATEWAY_IP" -p tcp --dport 80 -j MASQUERADE
+  sudo iptables -t nat -C POSTROUTING -s "$HOTSPOT_SUBNET" -d "$HOTSPOT_GATEWAY_IP" -p tcp --dport 443 -j MASQUERADE 2>/dev/null \
+    || sudo iptables -t nat -A POSTROUTING -s "$HOTSPOT_SUBNET" -d "$HOTSPOT_GATEWAY_IP" -p tcp --dport 443 -j MASQUERADE
 }
 
 handle_devices() {
@@ -575,18 +604,34 @@ activate_config() {
   return 0
 }
 
-connection_test() {
-  echo "🌍 Testing Internet Connection:"
+show_status() {
+  echo "📊 Current Network Status:"
 
   # Display mode information (robust glob handling)
   shopt -s nullglob
-  conf_files=("$CONFIG_DIR"/*.conf)
+  local conf_files=("$CONFIG_DIR"/*.conf)
+  local current_mode=""
+  local current_ssid=""
+  local current_password=""
+
   if [ ${#conf_files[@]} -gt 0 ]; then
     local latest_file
     latest_file=$(ls -1t "$CONFIG_DIR"/*.conf 2>/dev/null | head -n 1)
-    if [ -n "$latest_file" ]; then
-      local mode=$(grep -m 1 -oP 'MODE="\K[^"]+' "$latest_file" | tr -d '\n')
-      echo "🛠️  Current Mode: $mode"
+    if [ -n "$latest_file" ];then
+      current_mode=$(grep -m 1 -oP 'MODE="\K[^"]+' "$latest_file" | tr -d '\n')
+      current_ssid=$(grep -m 1 -oP 'SSID="\K[^"]+' "$latest_file" | tr -d '\n')
+      current_password=$(grep -m 1 -oP 'PASSWORD="\K[^"]+' "$latest_file" | tr -d '\n')
+      echo "🛠️  Current Mode: $current_mode"
+      if [ "$current_mode" == "hotspot" ]; then
+        echo "🔥 Hotspot SSID: $current_ssid"
+        echo "🔑 Hotspot Password: $current_password"
+        if command -v qrencode >/dev/null 2>&1; then
+          echo "📱 Scan QR Code to Connect:"
+          qrencode -t ANSIUTF8 "WIFI:T:WPA;S:$current_ssid;P:$current_password;;"
+        else
+          echo "(QR code generation skipped: 'qrencode' not found. Install with 'sudo apt install qrencode')"
+        fi
+      fi
     else
       echo "⚠️  No active configuration found."
     fi
@@ -597,67 +642,102 @@ connection_test() {
 
   # Show all IP addresses per interface
   echo -e "\n🌐 IP Addresses per Interface:"
-  for interface in $(nmcli -t -f DEVICE,TYPE dev status | grep -E 'wifi|ethernet' | cut -d: -f1); do
-    if [ ! -d "/sys/class/net/$interface" ]; then
-      echo "🔹 $interface: (interface does not exist)"
+  local interfaces_found_for_ip=0
+  # Using ls /sys/class/net and filtering for common relevant interfaces
+  for interface in $(ls /sys/class/net/); do
+    # Skip loopback unless it's the only interface (edge case, mostly for debugging)
+    if [[ "$interface" == "lo" && $(ls /sys/class/net/ | wc -l) -gt 1 ]]; then
       continue
     fi
-    ips=$(ip -4 addr show "$interface" | awk '/inet / {print $2}')
-    echo "🔹 $interface: ${ips:-No IPv4 address assigned}"
+    # Heuristic: check for a MAC address file, or if it's a bridge, or common patterns
+    if [ -f "/sys/class/net/$interface/address" ] || [ -d "/sys/class/net/$interface/bridge" ] || \
+       [[ "$interface" == "$WG_INTERFACE" && -n "$WG_INTERFACE" ]] || \
+       [[ "$interface" == "wlan"* ]] || [[ "$interface" == "eth"* ]] || \
+       [[ "$interface" == "en"* ]] || [[ "$interface" == "wl"* ]]; then
+      
+      ips=$(ip -4 addr show "$interface" 2>/dev/null | awk '/inet / {print $2}' || echo "N/A")
+      echo "🔹 $interface: ${ips:-No IPv4 address assigned}"
+      interfaces_found_for_ip=$((interfaces_found_for_ip + 1))
+    fi
   done
-
-  # Show WireGuard interface IP and traffic if present
-  if [ -n "$WG_INTERFACE" ] && ip link show "$WG_INTERFACE" &>/dev/null; then
-    wg_ips=$(ip -4 addr show "$WG_INTERFACE" | awk '/inet / {print $2}')
-    rx_bytes=$(cat /sys/class/net/$WG_INTERFACE/statistics/rx_bytes 2>/dev/null || echo "0")
-    tx_bytes=$(cat /sys/class/net/$WG_INTERFACE/statistics/tx_bytes 2>/dev/null || echo "0")
-    echo "🔹 $WG_INTERFACE (WireGuard): ${wg_ips:-No IPv4 address assigned}"
-    echo "   RX: $((rx_bytes / 1024)) KB"
-    echo "   TX: $((tx_bytes / 1024)) KB"
+   if [ "$interfaces_found_for_ip" -eq 0 ]; then
+    echo "No relevant network interfaces found to display IPs."
   fi
 
-  # Show external public IP
+  # Show WireGuard interface IP if present and distinct from the loop above
+  if [ -n "$WG_INTERFACE" ] && ip link show "$WG_INTERFACE" &>/dev/null; then
+    # Check if WG_INTERFACE was already listed by the loop above to avoid duplicate IP display
+    if ! (ls /sys/class/net/ | grep -q "^${WG_INTERFACE}$" && \
+          ( [ -f "/sys/class/net/$WG_INTERFACE/address" ] || [ -d "/sys/class/net/$WG_INTERFACE/bridge" ] || \
+            [[ "$WG_INTERFACE" == "wlan"* ]] || [[ "$WG_INTERFACE" == "eth"* ]] || \
+            [[ "$WG_INTERFACE" == "en"* ]] || [[ "$WG_INTERFACE" == "wl"* ]] ) ); then
+      wg_ips=$(ip -4 addr show "$WG_INTERFACE" | awk '/inet / {print $2}')
+      echo "🔹 $WG_INTERFACE (WireGuard): ${wg_ips:-No IPv4 address assigned}"
+    fi
+  fi
+  
+  echo # Newline
   echo -n "🌍 External Public IP: "
-  curl -s https://api.ipify.org || echo "(could not retrieve)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -s --max-time 5 https://api.ipify.org || curl -s --max-time 5 https://icanhazip.com || echo "(could not retrieve or timed out)"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- --timeout=5 https://api.ipify.org || wget -qO- --timeout=5 https://icanhazip.com || echo "(could not retrieve or timed out)"
+  else
+    echo "(curl and wget not found)"
+  fi
+  echo # Newline after IP
 
   # Test internet connectivity
-  if ping -c 1 8.8.8.8 &>/dev/null; then
-    echo " ✅ Internet is reachable (ping to 8.8.8.8 succeeded)."
+  if ping -c 1 -W 2 8.8.8.8 &>/dev/null; then
+    echo "✅ Internet is reachable (ping to 8.8.8.8 succeeded)."
   else
-    echo " ❌ Internet is NOT reachable (ping to 8.8.8.8 failed)."
-    return 1
+    echo "❌ Internet is NOT reachable (ping to 8.8.8.8 failed)."
   fi
 
-  # Check all managed interfaces (speed, RX/TX)
+  # Interface Details (Speed, RX/TX)
   echo -e "\n📡 Interface Details:"
-  for interface in $(nmcli -t -f DEVICE,TYPE dev status | grep -E 'wifi|ethernet' | cut -d: -f1); do
+  found_any=0
+  for interface in $(ls /sys/class/net | grep -v '^lo$'); do
     if [ ! -d "/sys/class/net/$interface" ]; then
-      echo "🔹 $interface: (interface does not exist)"
       continue
     fi
-    local speed
+    found_any=1
+    speed="N/A"
     if [ -f "/sys/class/net/$interface/speed" ]; then
-      speed=$(cat /sys/class/net/$interface/speed 2>/dev/null || echo "N/A")
-    else
-      speed=$(ethtool "$interface" 2>/dev/null | grep -i speed | awk '{print $2}' || echo "N/A")
+      speed_val=$(cat "/sys/class/net/$interface/speed" 2>/dev/null)
+      if [[ "$speed_val" =~ ^[0-9]+$ ]] && [ "$speed_val" -gt 0 ]; then
+        speed="$speed_val Mbps"
+      fi
     fi
-    local rx_bytes=$(cat /sys/class/net/$interface/statistics/rx_bytes 2>/dev/null || echo "0")
-    local tx_bytes=$(cat /sys/class/net/$interface/statistics/tx_bytes 2>/dev/null || echo "0")
-    echo "🔹 Interface: $interface"
-    echo "   Speed: ${speed:-N/A} Mbps"
+    if [[ "$speed" == "N/A" ]] && command -v ethtool >/dev/null 2>&1; then
+      speed_val=$(ethtool "$interface" 2>/dev/null | grep -oP 'Speed: \K[0-9]+(?=Mb/s)')
+      if [[ "$speed_val" =~ ^[0-9]+$ ]]; then
+        speed="$speed_val Mbps"
+      fi
+    fi
+    rx_bytes=$(cat "/sys/class/net/$interface/statistics/rx_bytes" 2>/dev/null || echo "0")
+    tx_bytes=$(cat "/sys/class/net/$interface/statistics/tx_bytes" 2>/dev/null || echo "0")
+    ips=$(ip -4 addr show "$interface" 2>/dev/null | awk '/inet / {print $2}' | paste -sd, -)
+    [ -z "$ips" ] && ips="No IPv4"
+    echo "DEBUG: $interface speed=$speed rx=$rx_bytes tx=$tx_bytes ips=$ips"
+    echo "🔹 Interface: $interface ($ips)"
+    echo "   Speed: $speed"
     echo "   RX: $((rx_bytes / 1024)) KB"
     echo "   TX: $((tx_bytes / 1024)) KB"
   done
+  if [ "$found_any" -eq 0 ]; then
+    echo "No network interfaces found to display details for."
+  fi
 
-  # Device authorization status and allowed devices
-  echo ""
+  # Device Authorization (Whitelist) Status:
+  echo "" 
   echo "🔒 Device Authorization (Whitelist) Status:"
   if [ -f "$DHCP_CONF" ]; then
     allowed_count=$(grep -c '^dhcp-host=' "$DHCP_CONF" || true)
     if [ "$allowed_count" -gt 0 ]; then
       echo "Whitelist is ENABLED. Allowed devices:"
-      grep '^dhcp-host=' "$DHCP_CONF" | while IFS=, read -r _ device ip _; do
-        echo "  - Device: $device, IP: $ip"
+      grep '^dhcp-host=' "$DHCP_CONF" | while IFS=, read -r _ device_name_auth ip_addr_auth _; do # Unique var names
+        echo "  - Device: $device_name_auth, IP: $ip_addr_auth"
       done
     else
       echo "Whitelist is ENABLED but no devices are currently authorized."
@@ -665,65 +745,103 @@ connection_test() {
   else
     echo "Whitelist is DISABLED. All devices may be allowed (unless restricted elsewhere)."
   fi
-
   # List currently connected Wi-Fi clients (hotspot mode)
   echo ""
   echo "📶 Connected Wi-Fi Clients (wlan0):"
-  if iw dev wlan0 station dump 2>/dev/null | grep -q 'Station'; then
-    iw dev wlan0 station dump | awk '
-      /^Station/ {mac=$2}
-      /rx bytes:/ {rx=$3}
-      /tx bytes:/ {tx=$3; print "  - MAC: " mac ", RX: " rx " bytes, TX: " tx " bytes"}
-    '
+  if [ -d "/sys/class/net/wlan0" ] && iw dev wlan0 info 2>/dev/null | grep -q "type AP"; then
+    if iw dev wlan0 station dump 2>/dev/null | grep -q 'Station'; then
+      iw dev wlan0 station dump | awk '
+        /^Station/ {mac=$2}
+        /rx bytes:/ {rx=$3}
+        /tx bytes:/ {tx=$3; print "  - MAC: " mac ", RX: " rx " bytes, TX: " tx " bytes"}
+      '
+    else
+      echo "No clients currently connected to wlan0 hotspot."
+    fi
   else
-    echo "No clients currently connected or not in hotspot mode."
+    echo "wlan0 is not active or not in hotspot mode."
   fi
-
   # Check if WireGuard is active
   if [ -n "$WG_INTERFACE" ] && ip link show "$WG_INTERFACE" &>/dev/null; then
+    echo ""
     echo "🔒 WireGuard interface '$WG_INTERFACE' detected. Verifying WireGuard connection..."
-    if ping -c 1 -I "$WG_INTERFACE" 8.8.8.8 &>/dev/null; then
+    if ping -c 1 -W 2 -I "$WG_INTERFACE" 8.8.8.8 &>/dev/null; then 
       echo "✅ Internet is reachable through WireGuard ($WG_INTERFACE)."
     else
       echo "❌ Internet is NOT reachable through WireGuard ($WG_INTERFACE)."
-      return 1
     fi
   else
-    echo "🔓 No active WireGuard interface detected."
+    echo ""
+    echo "🔓 No active WireGuard interface detected or WG_INTERFACE variable not set."
   fi
 }
 
 handle_setup() {
-  INTERFACE=$1
-  MODE=$2
-  SSID=${3:-"Capuchino Home"}
-  PASSWORD=${4:-"Twiggy2017"}
-  CAPTIVE_MODE=${5:-"off"}
-  CONFIG_NAME=${6:-""}
-  WG_INTERFACE=${7:-""}  # WireGuard interface (optional)
+  local L_INTERFACE=$1
+  local L_MODE=$2
+  local L_SSID=${3:-"Capuchino Home"}
+  local L_PASSWORD=${4:-"HotspotAccess123!"}
+  local L_CAPTIVE_MODE=${5:-"off"}
+  local L_CONFIG_NAME=${6:-""}
+  local L_WG_INTERFACE=${7:-""}  # WireGuard interface (optional)
 
   # Debug output
-  echo "Debug in handle_setup: MODE='$MODE', CAPTIVE_MODE='$CAPTIVE_MODE', WG_INTERFACE='$WG_INTERFACE'"
+  echo "Debug in handle_setup: MODE='$L_MODE', CAPTIVE_MODE='$L_CAPTIVE_MODE', WG_INTERFACE='$L_WG_INTERFACE'"
 
-  if [ "$MODE" == "hotspot" ]; then
-    echo "Starting hotspot on $INTERFACE..."
+  # Validate password length for hotspot mode
+  if [ "$L_MODE" == "hotspot" ] && [ ${#L_PASSWORD} -lt 8 ]; then
+    echo "Error: Password for hotspot mode must be at least 8 characters long." >&2
+    return 1
+  fi
+
+  # --- WireGuard state management: Ensure old/default WG interface is handled ---
+  # If no specific WireGuard interface is requested for this setup (L_WG_INTERFACE is empty),
+  # and the default global WireGuard interface (WG_INTERFACE, e.g., "wg0") is currently active, bring it down.
+  if [ -z "$L_WG_INTERFACE" ]; then
+    if sudo wg show "$WG_INTERFACE" &>/dev/null; then # Check if default WG is active
+      echo "No WireGuard interface specified for current setup. Attempting to bring down default interface $WG_INTERFACE..."
+      if sudo wg-quick down "$WG_INTERFACE"; then
+        echo "Default WireGuard interface $WG_INTERFACE brought down successfully."
+      else
+        # This might fail if not managed by wg-quick or already down, which is not necessarily an error here.
+        echo "Note: Failed to bring down default WireGuard interface $WG_INTERFACE (it might not have been up or not managed by wg-quick)."
+      fi
+    fi
+  # Else, if a specific WireGuard interface IS requested (L_WG_INTERFACE is not empty),
+  # and it's DIFFERENT from the default global WG_INTERFACE,
+  # and the default global WG_INTERFACE is active, bring down the default one first.
+  # This prepares for activating the new L_WG_INTERFACE later.
+  elif [ "$L_WG_INTERFACE" != "$WG_INTERFACE" ]; then
+    if sudo wg show "$WG_INTERFACE" &>/dev/null; then # Check if default WG is active
+      echo "A different WireGuard interface ($L_WG_INTERFACE) is requested. Attempting to bring down default interface $WG_INTERFACE first..."
+      if sudo wg-quick down "$WG_INTERFACE"; then
+        echo "Default WireGuard interface $WG_INTERFACE brought down successfully."
+      else
+        echo "Note: Failed to bring down default WireGuard interface $WG_INTERFACE (it might not have been up or not managed by wg-quick)."
+      fi
+    fi
+  fi
+  # --- End WireGuard state management ---
+
+  if [ "$L_MODE" == "hotspot" ]; then
+    echo "Starting hotspot on $L_INTERFACE..."
 
     # Disconnect the interface from any current Wi-Fi network
-    nmcli dev disconnect "$INTERFACE" 2>/dev/null || echo "Interface $INTERFACE was not connected or already disconnected."
+    nmcli dev disconnect "$L_INTERFACE" 2>/dev/null || echo "Interface $L_INTERFACE was not connected or already disconnected."
 
     # Delete any existing connection with this name (no error if missing)
     nmcli con delete "$HOTSPOT_NAME" 2>/dev/null
 
     # Add a new Wi-Fi hotspot connection on the specified interface
-    nmcli con add type wifi ifname "$INTERFACE" mode ap con-name "$HOTSPOT_NAME" ssid "$SSID" autoconnect yes
+    nmcli con add type wifi ifname "$L_INTERFACE" mode ap con-name "$HOTSPOT_NAME" ssid "$L_SSID" autoconnect yes
 
-    # Use the 5GHz band (faster and better for modern devices like iPhone 13)
-    nmcli con modify "$HOTSPOT_NAME" wifi.band a
-    nmcli con modify "$HOTSPOT_NAME" wifi.channel 36
+    # Use the 2.4GHz band (better for compatibility with older devices)
+    nmcli con modify "$HOTSPOT_NAME" wifi.band b
+    nmcli con modify "$HOTSPOT_NAME" wifi.channel 1
 
     # Set WPA2 security
     nmcli con modify "$HOTSPOT_NAME" wifi-sec.key-mgmt wpa-psk
-    nmcli con modify "$HOTSPOT_NAME" wifi-sec.psk "$PASSWORD"
+    nmcli con modify "$HOTSPOT_NAME" wifi-sec.psk "$L_PASSWORD"
 
     # Set static IP and enable internet sharing (NAT + DHCP)
     nmcli con modify "$HOTSPOT_NAME" ipv4.method shared
@@ -739,50 +857,112 @@ handle_setup() {
 
     nmcli con up "$HOTSPOT_NAME"
     enable_ip_forwarding
-    setup_wireguard_routing
+    
+    if [ -n "$L_WG_INTERFACE" ]; then
+      setup_wireguard_routing "$L_WG_INTERFACE"
+    else
+      echo "No WireGuard interface specified, skipping WireGuard-specific routing."
+    fi
 
     # Configure DNS with captive portal by default
     write_dns_config
 
-    # Only save a new configuration if this is a new setup (not activating an existing config)
-    if [ -z "$CONFIG_NAME" ]; then
-      echo "Reusing existing configuration (not saving a duplicate)"
-    else
-      # Save successful configuration
-      save_config "$INTERFACE" "$MODE" "$SSID" "$PASSWORD" "$CAPTIVE_MODE" "$CONFIG_NAME"
+    # --- REVISED SAVE/TOUCH LOGIC FOR HOTSPOT ---
+    if [ ! -d "$CONFIG_DIR" ]; then
+      mkdir -p "$CONFIG_DIR" # Ensure dir exists
     fi
 
-  elif [ "$MODE" == "client" ]; then
+    local existing_match_file=""
+    # Temporarily set nullglob to handle empty CONFIG_DIR or no .conf files gracefully
+    local shopt_nullglob_was_set=0
+    if ! shopt -q nullglob; then shopt -s nullglob; shopt_nullglob_was_set=1; fi
+
+    for file in "$CONFIG_DIR"/*.conf; do
+      # Extract all relevant fields from the file for comparison
+      # Assuming grep will exit with error if pattern not found, and set -e/-o pipefail will handle it.
+      # If a field is missing, its variable will be empty.
+      local f_interface=$(grep -m 1 -oP 'INTERFACE="\K[^"]+' "$file" 2>/dev/null | tr -d '\n')
+      local f_mode=$(grep -m 1 -oP 'MODE="\K[^"]+' "$file" 2>/dev/null | tr -d '\n')
+      local f_ssid=$(grep -m 1 -oP 'SSID="\K[^"]+' "$file" 2>/dev/null | tr -d '\n')
+      local f_password=$(grep -m 1 -oP 'PASSWORD="\K[^"]+' "$file" 2>/dev/null | tr -d '\n')
+      local f_captive_mode=$(grep -m 1 -oP 'CAPTIVE_MODE="\K[^"]+' "$file" 2>/dev/null | tr -d '\n')
+      # Note: L_WG_INTERFACE is not currently part of the saved config fields, so not matched here.
+
+      # Compare with the current setup parameters
+      if [[ "$f_interface" == "$L_INTERFACE" && \
+            "$f_mode" == "$L_MODE" && \
+            "$f_ssid" == "$L_SSID" && \
+            "$f_password" == "$L_PASSWORD" && \
+            "$f_captive_mode" == "$L_CAPTIVE_MODE" ]]; then
+        existing_match_file="$file"
+        break
+      fi
+    done
+    # Restore nullglob if it was changed
+    if [ "$shopt_nullglob_was_set" -eq 1 ]; then shopt -u nullglob; fi
+
+    if [ -n "$existing_match_file" ]; then
+      # An identical configuration file already exists.
+      echo "Identical configuration file found: $(basename "$existing_match_file" .conf)"
+      # Touch it to update its modification timestamp, making it the "latest".
+      if touch "$existing_match_file"; then
+        echo "Updated timestamp for $(basename "$existing_match_file" .conf) to reflect current activation."
+      else
+        echo "Warning: Failed to update timestamp for $(basename "$existing_match_file" .conf)." >&2
+      fi
+    else
+      # No exact match found, so save a new configuration.
+      local effective_config_name="$L_CONFIG_NAME" # Use user-provided name if available
+      if [ -z "$effective_config_name" ]; then
+        # Generate a base name (e.g., SSID_mode)
+        # Pass empty custom_name to create_config_id so it generates from mode and SSID
+        local base_id=$(create_config_id "" "$L_MODE" "$L_SSID") 
+        # Ensure the generated name is unique by appending a number if needed
+        effective_config_name=$(get_unique_config_id "$base_id") 
+        echo "No config name provided for new setup, generated unique name: $effective_config_name"
+      else
+        # User provided a name. save_config will use this name as the filename base.
+        # If a file with this name.conf already exists, save_config will overwrite it.
+        echo "Using provided config name: $effective_config_name"
+      fi
+      
+      # Save the new/updated configuration.
+      # The 'effective_config_name' is passed as the 'custom_name' (6th argument) to save_config.
+      save_config "$L_INTERFACE" "$L_MODE" "$L_SSID" "$L_PASSWORD" "$L_CAPTIVE_MODE" "$effective_config_name"
+    fi
+    # --- END REVISED SAVE/TOUCH LOGIC ---
+
+  elif [ "$L_MODE" == "client" ]; then
     echo "Connecting as client..."
     nmcli con down "$HOTSPOT_NAME" 2>/dev/null
 
     # Check if the configuration already exists
-    if config_exists "$SSID" "$MODE" "$PASSWORD"; then
-      echo "Configuration for SSID='$SSID', MODE='$MODE' already exists. Not saving duplicate."
+    if config_exists "$L_SSID" "$L_MODE" "$L_PASSWORD"; then
+      echo "Configuration for SSID='$L_SSID', MODE='$L_MODE' already exists. Not saving duplicate."
     else
       # Attempt to connect
-      if nmcli dev wifi connect "$SSID" password "$PASSWORD" ifname "$INTERFACE"; then
-        echo "Successfully connected to $SSID"
+      if nmcli dev wifi connect "$L_SSID" password "$L_PASSWORD" ifname "$L_INTERFACE"; then
+        echo "Successfully connected to $L_SSID"
 
         # Disable power saving for the client connection
         sleep 2
-        ACTIVE_CON_UUID=$(nmcli -g GENERAL.CONNECTION dev show "$INTERFACE" | head -n 1)
+        ACTIVE_CON_UUID=$(nmcli -g GENERAL.CONNECTION dev show "$L_INTERFACE" | head -n 1)
 
         if [ -n "$ACTIVE_CON_UUID" ]; then
           ACTIVE_CON_NAME=$(nmcli -g CONNECTION.ID c show "$ACTIVE_CON_UUID" | head -n 1)
-          echo "Disabling Wi-Fi power saving for connection '$ACTIVE_CON_NAME' (UUID: $ACTIVE_CON_UUID) on interface $INTERFACE..."
+          echo "Disabling Wi-Fi power saving for connection '$ACTIVE_CON_NAME' (UUID: $ACTIVE_CON_UUID) on interface $L_INTERFACE..."
           nmcli con modify "$ACTIVE_CON_UUID" wifi.powersave 2
         fi
 
         # Save successful configuration
-        save_config "$INTERFACE" "$MODE" "$SSID" "$PASSWORD" "$CAPTIVE_MODE" "$CONFIG_NAME"
+        save_config "$L_INTERFACE" "$L_MODE" "$L_SSID" "$L_PASSWORD" "$L_CAPTIVE_MODE" "$L_CONFIG_NAME"
       else
-        echo "Failed to connect to $SSID"
+        echo "Failed to connect to $L_SSID"
         return 1
       fi
     fi
   else
-    echo "Unknown mode: $MODE"
+    echo "Unknown mode: $L_MODE"
     exit 1
   fi
 
@@ -796,16 +976,16 @@ handle_setup() {
     return 1
   fi
 
-  # Activate WireGuard if WG_INTERFACE is provided
-  if [ -n "$WG_INTERFACE" ]; then
-    echo "Activating WireGuard interface: $WG_INTERFACE"
-    if sudo wg-quick up "$WG_INTERFACE"; then
-      echo "WireGuard interface '$WG_INTERFACE' activated successfully."
+  # Activate WireGuard if L_WG_INTERFACE is provided
+  if [ -n "$L_WG_INTERFACE" ]; then
+    echo "Activating WireGuard interface: $L_WG_INTERFACE"
+    if sudo wg-quick up "$L_WG_INTERFACE"; then
+      echo "WireGuard interface '$L_WG_INTERFACE' activated successfully."
 
       # Re-verify internet connectivity after WireGuard is set up
-      connection_test
+      show_status
     else
-      echo "Failed to activate WireGuard interface '$WG_INTERFACE'."
+      echo "Failed to activate WireGuard interface '$L_WG_INTERFACE'."
       return 1
     fi
   fi
@@ -912,7 +1092,7 @@ remove_duplicate_profiles() {
           for num_str in $keep_selection; do
             if [[ "$num_str" =~ ^[0-9]+$ ]]; then
               local idx=$((num_str - 1))
-              if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#profiles_for_ssid[@]}" ]; then
+              if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#profiles_for_ssid[@]}"]; then
                 to_keep_indices["$idx"]=1
               else
                 echo "Invalid number: $num_str for SSID \"$ssid_key\""
@@ -1072,8 +1252,71 @@ case "$1" in
     print_help
     ;;
   --setup)
-    shift
-    handle_setup "$@"
+    shift # remove --setup
+
+    # Initialize variables to store parsed values
+    L_INTERFACE=""
+    L_MODE=""
+    L_SSID="" 
+    L_PASSWORD=""
+    L_CAPTIVE_MODE=""
+    L_CONFIG_NAME=""
+    L_WG_INTERFACE=""
+
+    # Parse named arguments
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --interface)
+          L_INTERFACE="$2"
+          shift 2
+          ;;
+        --mode)
+          L_MODE="$2"
+          shift 2
+          ;;
+        --ssid)
+          L_SSID="$2"
+          shift 2
+          ;;
+        --password)
+          L_PASSWORD="$2"
+          shift 2
+          ;;
+        --config_name)
+          L_CONFIG_NAME="$2"
+          shift 2
+          ;;
+        --wg_interface)
+          L_WG_INTERFACE="$2"
+          shift 2
+          ;;
+        --captive_mode)
+          L_CAPTIVE_MODE="$2"
+          shift 2
+          ;;
+        *)
+          echo "Error: Unknown parameter for --setup: $1" >&2
+          print_help
+          exit 1
+          ;;
+      esac
+    done
+
+    # Validate required parameters (interface and mode)
+    if [ -z "$L_INTERFACE" ]; then
+      echo "Error: --interface is required for --setup." >&2
+      print_help
+      exit 1
+    fi
+    if [ -z "$L_MODE" ]; then
+      echo "Error: --mode is required for --setup." >&2
+      print_help
+      exit 1
+    fi
+
+    # Call handle_setup with the parsed values in the correct positional order
+    # handle_setup will apply its own defaults for optional parameters if they are passed as empty strings
+    handle_setup "$L_INTERFACE" "$L_MODE" "$L_SSID" "$L_PASSWORD" "$L_CAPTIVE_MODE" "$L_CONFIG_NAME" "$L_WG_INTERFACE"
     ensure_hairpin_nat
     ;;
   --edit)
@@ -1101,7 +1344,10 @@ case "$1" in
     run_debug_diagnostics "$1"
     ;;
   --test|-t)
-    connection_test
+    show_status
+    ;;
+  status)
+    show_status
     ;;
   *)
     if [ $# -eq 0 ]; then
