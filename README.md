@@ -1,23 +1,30 @@
-This script is a comprehensive solution designed to transform a Raspberry Pi into a versatile and powerful Wi-Fi router. It offers a range of features that cater to 
-both personal and professional networking needs, making it an ideal choice for tech enthusiasts and small businesses alike.                                          
+# 🌟 WORK-HIVE Network Manager
 
-                                                                            Key Features:                                                                            
+A powerful command-line tool for easily managing network connections on Linux systems, with special focus on WiFi hotspot and client modes with WireGuard VPN support.
 
- 1 Hotspot and Client Modes: Easily switch between acting as a Wi-Fi hotspot or connecting to an existing network as a client. This flexibility allows users to adapt
-   the Raspberry Pi to various networking scenarios.                                                                                                                 
- 2 WireGuard VPN Integration: Enhance security and privacy with built-in support for WireGuard VPN, ensuring encrypted connections and secure data transmission.     
- 3 Captive Portal: Implement a captive portal for guest networks, providing a customizable landing page for users to authenticate or view terms of service before    
-   accessing the internet.                                                                                                                                           
- 4 Device Management: Authorize or revoke internet access for specific devices, offering control over who can connect to the network.                                
- 5 Configuration Management: Save, list, and activate different network configurations, making it easy to switch between setups without reconfiguring each time.     
- 6 Network Diagnostics: Run detailed diagnostics to troubleshoot and optimize network performance, ensuring reliable connectivity.                                   
- 7 QR Code Connectivity: Simplify the connection process with QR codes, allowing users to connect to the network with a quick scan.                                  
- 8 Duplicate Management: Automatically detect and manage duplicate network profiles and configurations, keeping the system organized and efficient.                  
+![WORK-HIVE Network Status](status_screenshot.png)
 
-This script is pre-configured on an SD card, making it a plug-and-play solution for turning your Raspberry Pi into a robust Wi-Fi router. With its user-friendly     
-interface and powerful features, it’s perfect for anyone looking to enhance their networking capabilities with minimal setup effort. 
+## 🚀 Features
 
-By Nicolas Fodor
-# workhive
-# workhive
-# workhive
+- **Dual-mode Operation**: Switch between hotspot and client mode with a single command
+- **WireGuard VPN Integration**: Seamlessly connect and route traffic through WireGuard
+- **Interactive Setup**: User-friendly wizard for easy configuration
+- **Configuration Management**: Save, select, and reuse network configurations
+- **Detailed Network Status**: Comprehensive view of your network state
+- **Device Whitelisting**: Control which devices can access your hotspot
+- **Captive Portal Support**: Force DNS queries through your system
+- **Diagnostics Tools**: Debug network issues with detailed information
+
+## 📋 Requirements
+
+- NetworkManager
+- WireGuard tools (for VPN functionality)
+- Linux system with Bash
+- Standard networking utilities (nmcli, ip, ping, etc.)
+
+## 🛠️ Installation
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/nfodor/work-hive.git
+   cd work-hive
