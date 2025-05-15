@@ -1,5 +1,8 @@
 #!/bin/bash
+
+# Enable debug output to see what's happening
 #set -x 
+
 # Enable strict mode and verbose error handling at the top of the script
 set -euo pipefail
 IFS=$'\n\t'
@@ -607,36 +610,161 @@ activate_config() {
 show_status() {
   echo "📊 Current Network Status:"
 
-  # Display mode information (robust glob handling)
+  # First check actual network connection status
+  local hotspot_active=0
+  local client_active=0
+  local active_ssid=""
+  local active_interface=""
+  
+  # Check if hotspot is active
+  if nmcli -t -f NAME,DEVICE c show --active | grep -q "$HOTSPOT_NAME"; then
+    hotspot_active=1
+    active_interface=$(nmcli -t -f NAME,DEVICE c show --active | grep "$HOTSPOT_NAME" | cut -d':' -f2)
+  fi
+  
+  # Check for active WiFi client connections
+  local wifi_connections=$(nmcli -t -f NAME,TYPE,DEVICE c show --active | grep '802-11-wireless')
+  if [ -n "$wifi_connections" ]; then
+    # Extract connection name that isn't the hotspot
+    local client_conn=$(echo "$wifi_connections" | grep -v "$HOTSPOT_NAME" | head -n 1)
+    if [ -n "$client_conn" ]; then
+      client_active=1
+      active_ssid=$(echo "$client_conn" | cut -d':' -f1)
+      active_interface=$(echo "$client_conn" | cut -d':' -f3)
+    fi
+  fi
+  
+  # Get the most recent configuration file for additional details
   shopt -s nullglob
   local conf_files=("$CONFIG_DIR"/*.conf)
   local current_mode=""
   local current_ssid=""
   local current_password=""
+  local current_interface=""
 
+  # First show the actual active network state
+  echo "📡 Current Active Network:"
+  if [ $hotspot_active -eq 1 ]; then
+    echo "🔥 HOTSPOT MODE ACTIVE on interface $active_interface"
+    local hotspot_ssid=$(nmcli -g 802-11-wireless.ssid c show "$HOTSPOT_NAME" 2>/dev/null || echo "$HOTSPOT_NAME")
+    echo "   SSID: $hotspot_ssid"
+    
+    # Get DHCP-assigned clients if any
+    if [ -f "$DHCP_CONF" ]; then
+      local client_count=$(grep -c '^dhcp-host=' "$DHCP_CONF" || echo "0")
+      if [ "$client_count" -gt 0 ]; then
+        echo "   Connected Clients: $client_count authorized devices"
+      fi
+    fi
+    
+    if command -v qrencode >/dev/null 2>&1 && [ -n "$hotspot_ssid" ]; then
+      # Try to get the password from network manager
+      local hotspot_password=$(nmcli -g 802-11-wireless-security.psk c show "$HOTSPOT_NAME" 2>/dev/null)
+      if [ -n "$hotspot_password" ]; then
+        echo "📱 Scan QR Code to Connect:"
+        qrencode -t ANSIUTF8 "WIFI:T:WPA;S:$hotspot_ssid;P:$hotspot_password;;"
+      fi
+    fi
+  elif [ $client_active -eq 1 ]; then
+    echo "🌐 CLIENT MODE ACTIVE on interface $active_interface"
+    echo "   Connected to: $active_ssid"
+    
+    # Show signal strength
+    local signal_strength=$(nmcli -f IN-USE,SIGNAL,BARS dev wifi list | grep -e "^*" | awk '{print $2 "% " $3}')
+    if [ -n "$signal_strength" ]; then
+      echo "   Signal Strength: $signal_strength"
+    fi
+    
+    # Show IP address
+    local ip_address=$(ip -4 addr show dev "$active_interface" | grep -oP 'inet \K[\d.]+')
+    if [ -n "$ip_address" ]; then
+      echo "   IP Address: $ip_address"
+    else
+      echo "   ⚠️ No IP address assigned"
+    fi
+  else
+    echo "⚠️ No active WiFi connection found"
+    
+    # Additional diagnostics for no connection
+    local wifi_interfaces=$(nmcli -f DEVICE,TYPE dev | grep wifi | cut -d' ' -f1)
+    if [ -n "$wifi_interfaces" ]; then
+      echo "   Available WiFi interfaces: $wifi_interfaces"
+      
+      # Check if WiFi is blocked
+      local rfkill_status=$(rfkill list wifi | grep -o "Soft blocked: [a-z]*" | cut -d' ' -f3)
+      if [ "$rfkill_status" = "yes" ]; then
+        echo "   ⚠️ WiFi is soft-blocked. Run 'rfkill unblock wifi' to enable."
+      fi
+      
+      # Check for nearby networks
+      local network_count=$(nmcli -f SSID dev wifi list | grep -v -e '^SSID' -e '^--' | wc -l)
+      echo "   WiFi networks in range: $network_count"
+    else
+      echo "   ⚠️ No WiFi interfaces found"
+    fi
+  fi
+  
+  echo "" # Line break
+  
+  # Show WireGuard status if running
+  local wg_interfaces=$(ip -o link show | grep wireguard | cut -d':' -f2 | tr -d ' ')
+  if [ -n "$wg_interfaces" ]; then
+    echo "🔒 WireGuard Status:"
+    for wg_if in $wg_interfaces; do
+      echo "   Interface: $wg_if"
+      local wg_ip=$(ip -4 addr show "$wg_if" | grep -oP 'inet \K[\d.]+')
+      if [ -n "$wg_ip" ]; then
+        echo "   IP Address: $wg_ip"
+        
+        # Test routing through WireGuard
+        if ping -c 1 -W 2 -I "$wg_if" 8.8.8.8 &>/dev/null; then
+          echo "   Internet access: WORKING ✓"
+        else
+          echo "   Internet access: NOT WORKING ✗"
+        fi
+      else
+        echo "   ⚠️ No IP address assigned"
+      fi
+    done
+    echo "" # Line break
+  fi
+  
+  # Now show information about stored configurations
   if [ ${#conf_files[@]} -gt 0 ]; then
     local latest_file
     latest_file=$(ls -1t "$CONFIG_DIR"/*.conf 2>/dev/null | head -n 1)
-    if [ -n "$latest_file" ];then
+    
+    if [ -n "$latest_file" ]; then
+      # Extract config details but don't assume they're active
       current_mode=$(grep -m 1 -oP 'MODE="\K[^"]+' "$latest_file" | tr -d '\n')
       current_ssid=$(grep -m 1 -oP 'SSID="\K[^"]+' "$latest_file" | tr -d '\n')
       current_password=$(grep -m 1 -oP 'PASSWORD="\K[^"]+' "$latest_file" | tr -d '\n')
-      echo "🛠️  Current Mode: $current_mode"
-      if [ "$current_mode" == "hotspot" ]; then
-        echo "🔥 Hotspot SSID: $current_ssid"
-        echo "🔑 Hotspot Password: $current_password"
-        if command -v qrencode >/dev/null 2>&1; then
-          echo "📱 Scan QR Code to Connect:"
-          qrencode -t ANSIUTF8 "WIFI:T:WPA;S:$current_ssid;P:$current_password;;"
+      current_interface=$(grep -m 1 -oP 'INTERFACE="\K[^"]+' "$latest_file" | tr -d '\n')
+      local config_id=$(basename "$latest_file" .conf)
+      
+      echo "📁 Most Recent Saved Configuration: $config_id"
+      echo "   Mode: $current_mode"
+      echo "   SSID: $current_ssid"
+      echo "   Interface: $current_interface"
+      
+      # Check if most recent config matches current network state
+      if [ $hotspot_active -eq 1 ] && [ "$current_mode" = "hotspot" ]; then
+        echo "   ✓ Configuration matches active network state"
+      elif [ $client_active -eq 1 ] && [ "$current_mode" = "client" ] && [ "$current_ssid" = "$active_ssid" ]; then
+        echo "   ✓ Configuration matches active network state"
+      else
+        echo "   ⚠️ Configuration does not match active network state"
+        if [ $hotspot_active -eq 1 ]; then
+          echo "      (Hotspot is active but saved config is for $current_mode mode)"
+        elif [ $client_active -eq 1 ]; then
+          echo "      (Connected to '$active_ssid' but saved config is for '$current_ssid')"
         else
-          echo "(QR code generation skipped: 'qrencode' not found. Install with 'sudo apt install qrencode')"
+          echo "      (No active connection but saved config exists for '$current_ssid')"
         fi
       fi
     else
-      echo "⚠️  No active configuration found."
+      echo "⚠️ No saved configurations found."
     fi
-  else
-    echo "⚠️  No saved configurations found."
   fi
   shopt -u nullglob
 
@@ -934,31 +1062,79 @@ handle_setup() {
 
   elif [ "$L_MODE" == "client" ]; then
     echo "Connecting as client..."
-    nmcli con down "$HOTSPOT_NAME" 2>/dev/null
-
-    # Check if the configuration already exists
-    if config_exists "$L_SSID" "$L_MODE" "$L_PASSWORD"; then
-      echo "Configuration for SSID='$L_SSID', MODE='$L_MODE' already exists. Not saving duplicate."
+    # First disconnect from the hotspot if it's active
+    nmcli con down "$HOTSPOT_NAME" 2>/dev/null || true
+    
+    # First, try to connect to the network directly
+    echo "Attempting to connect to $L_SSID..."
+    
+    # Check if we're already connected to this network
+    if nmcli -t -f NAME c show --active | grep -q "^$L_SSID$"; then
+        echo "Already connected to $L_SSID."
+        connection_attempt=1
     else
-      # Attempt to connect
-      if nmcli dev wifi connect "$L_SSID" password "$L_PASSWORD" ifname "$L_INTERFACE"; then
-        echo "Successfully connected to $L_SSID"
-
-        # Disable power saving for the client connection
-        sleep 2
-        ACTIVE_CON_UUID=$(nmcli -g GENERAL.CONNECTION dev show "$L_INTERFACE" | head -n 1)
-
-        if [ -n "$ACTIVE_CON_UUID" ]; then
-          ACTIVE_CON_NAME=$(nmcli -g CONNECTION.ID c show "$ACTIVE_CON_UUID" | head -n 1)
-          echo "Disabling Wi-Fi power saving for connection '$ACTIVE_CON_NAME' (UUID: $ACTIVE_CON_UUID) on interface $L_INTERFACE..."
-          nmcli con modify "$ACTIVE_CON_UUID" wifi.powersave 2
+        # Try to connect using the specified interface
+        if nmcli dev wifi connect "$L_SSID" password "$L_PASSWORD" ifname "$L_INTERFACE" 2>&1; then
+            echo "Successfully connected to $L_SSID"
+            connection_attempt=1
+        else
+            # If that fails, try without specifying the interface
+            echo "Connection failed with specified interface. Trying without interface specification..."
+            if nmcli dev wifi connect "$L_SSID" password "$L_PASSWORD" 2>&1; then
+                echo "Successfully connected to $L_SSID (without specifying interface)"
+                connection_attempt=1
+            else
+                echo "All connection attempts failed. Please check your WiFi settings and try again."
+                echo "Details of the failure:"
+                nmcli dev wifi connect "$L_SSID" password "$L_PASSWORD" ifname "$L_INTERFACE" 2>&1 || true
+                # Don't return error here - we'll still save the config
+            fi
         fi
-
-        # Save successful configuration
+    fi
+    
+    # Save the configuration regardless of whether connection succeeded
+    if config_exists "$L_SSID" "$L_MODE" "$L_PASSWORD"; then
+        echo "Configuration for SSID='$L_SSID', MODE='$L_MODE' already exists. Not saving duplicate."
+    else
+        # Save the configuration
         save_config "$L_INTERFACE" "$L_MODE" "$L_SSID" "$L_PASSWORD" "$L_CAPTIVE_MODE" "$L_CONFIG_NAME"
+        echo "Saved new configuration for $L_SSID"
+    fi
+    
+    # Set up WireGuard if specified
+    if [ -n "$L_WG_INTERFACE" ]; then
+    # Check if WireGuard is active
+if sudo wg show wg0 &>/dev/null; then
+  echo "Taking down WireGuard interface: wg0"
+  sudo wg-quick down wg0
+fi
+      echo "Activating WireGuard interface: $L_WG_INTERFACE"
+      if sudo wg-quick up "$L_WG_INTERFACE" 2>&1; then
+        echo "WireGuard interface '$L_WG_INTERFACE' activated successfully."
+        
+        # Setup routing specifically for client mode
+        if [ "$L_MODE" == "client" ]; then
+          echo "Setting up routing for WireGuard in client mode..."
+          # Enable IP forwarding if it's not already enabled
+          enable_ip_forwarding
+          
+          # Ensure that traffic from this device can go through WireGuard
+          sudo iptables -t nat -C POSTROUTING -o "$L_WG_INTERFACE" -j MASQUERADE 2>/dev/null \
+            || sudo iptables -t nat -A POSTROUTING -o "$L_WG_INTERFACE" -j MASQUERADE
+          
+          echo "WireGuard routing set up for client mode."
+        fi
       else
-        echo "Failed to connect to $L_SSID"
-        return 1
+        echo "Failed to activate WireGuard interface '$L_WG_INTERFACE'."
+        echo "Detailed error:"
+        sudo wg-quick up "$L_WG_INTERFACE" 2>&1
+        
+        read -p "Continue without WireGuard? (y/n): " continue_without_wg
+        if [ "$continue_without_wg" != "y" ] && [ "$continue_without_wg" != "Y" ]; then
+          echo "Setup canceled."
+          return 1
+        fi
+        echo "Continuing setup without WireGuard..."
       fi
     fi
   else
@@ -977,18 +1153,193 @@ handle_setup() {
   fi
 
   # Activate WireGuard if L_WG_INTERFACE is provided
+  local wg_active=0
+  local wg_config_exists=0
+  
   if [ -n "$L_WG_INTERFACE" ]; then
-    echo "Activating WireGuard interface: $L_WG_INTERFACE"
-    if sudo wg-quick up "$L_WG_INTERFACE"; then
-      echo "WireGuard interface '$L_WG_INTERFACE' activated successfully."
-
-      # Re-verify internet connectivity after WireGuard is set up
-      show_status
+    # Check if the WireGuard configuration file exists
+    if [ -f "/etc/wireguard/${L_WG_INTERFACE}.conf" ]; then
+      wg_config_exists=1
+      echo "Found WireGuard configuration for $L_WG_INTERFACE"
     else
-      echo "Failed to activate WireGuard interface '$L_WG_INTERFACE'."
-      return 1
+      echo "Warning: WireGuard configuration file not found for interface $L_WG_INTERFACE"
+      echo "Expected file: /etc/wireguard/${L_WG_INTERFACE}.conf"
+      echo "Please create the configuration file before activating WireGuard."
+      
+      read -p "Continue without WireGuard? (y/n): " continue_without_wg
+      if [ "$continue_without_wg" != "y" ] && [ "$continue_without_wg" != "Y" ]; then
+        echo "Setup canceled."
+        return 1
+      fi
+      echo "Continuing setup without WireGuard..."
+    fi
+    
+    if [ $wg_config_exists -eq 1 ]; then
+    # Check if WireGuard is active
+if sudo wg show wg0 &>/dev/null; then
+  echo "Taking down WireGuard interface: wg0"
+  sudo wg-quick down wg0
+fi
+      echo "Activating WireGuard interface: $L_WG_INTERFACE"
+      if sudo wg-quick up "$L_WG_INTERFACE" 2>&1; then
+        echo "WireGuard interface '$L_WG_INTERFACE' activated successfully."
+        wg_active=1
+        
+        # Setup routing specifically for client mode
+        if [ "$L_MODE" == "client" ]; then
+          echo "Setting up routing for WireGuard in client mode..."
+          # Enable IP forwarding if it's not already enabled
+          enable_ip_forwarding
+          
+          # Ensure that traffic from this device can go through WireGuard
+          sudo iptables -t nat -C POSTROUTING -o "$L_WG_INTERFACE" -j MASQUERADE 2>/dev/null \
+            || sudo iptables -t nat -A POSTROUTING -o "$L_WG_INTERFACE" -j MASQUERADE
+          
+          echo "WireGuard routing set up for client mode."
+        fi
+      else
+        echo "Failed to activate WireGuard interface '$L_WG_INTERFACE'."
+        echo "Detailed error:"
+        sudo wg-quick up "$L_WG_INTERFACE" 2>&1
+        
+        read -p "Continue without WireGuard? (y/n): " continue_without_wg
+        if [ "$continue_without_wg" != "y" ] && [ "$continue_without_wg" != "Y" ]; then
+          echo "Setup canceled."
+          return 1
+        fi
+        echo "Continuing setup without WireGuard..."
+      fi
     fi
   fi
+  
+  # Print a clear summary of what was done
+  echo ""
+  echo "✅ Configuration Applied ✅"
+  echo "======================================="
+  echo "Interface:    $L_INTERFACE"
+  
+  # Check if the interface has an IP address
+  local ip_address
+  ip_address=$(ip -4 addr show "$L_INTERFACE" 2>/dev/null | grep -oP 'inet \K[\d.]+')
+  
+  if [ "$L_MODE" == "hotspot" ]; then
+    echo "Mode:         HOTSPOT"
+    echo "SSID:         $L_SSID"
+    echo "Password:     $(echo "$L_PASSWORD" | sed 's/./*/g') (hidden)"
+    if [ "$L_CAPTIVE_MODE" != "off" ]; then
+      echo "Captive Mode: $L_CAPTIVE_MODE"
+    fi
+    
+    if nmcli -t -f NAME c show --active | grep -q "$HOTSPOT_NAME"; then
+      echo "Hotspot Status: ACTIVE ✓"
+    else
+      echo "⚠️ Warning: Hotspot may not be active"
+    fi
+  else
+    echo "Mode:         CLIENT"
+    echo "WiFi Network: $L_SSID"
+    
+    if nmcli -t -f NAME c show --active | grep -q "$L_SSID"; then
+      echo "Connection Status: CONNECTED ✓"
+    else
+      # Check if connected to any network
+      local connected_ssid
+      connected_ssid=$(nmcli -t -f NAME,TYPE c show --active | grep '802-11-wireless' | cut -d: -f1)
+      
+      if [ -n "$connected_ssid" ]; then
+        echo "⚠️ Warning: Connected to '$connected_ssid' instead of '$L_SSID'"
+      else
+        echo "⚠️ Warning: Not connected to any WiFi network"
+      fi
+    fi
+  fi
+  
+  # Show IP address info
+  if [ -n "$ip_address" ]; then
+    echo "IP Address:   $ip_address ✓"
+  else
+    echo "IP Address:   NONE ✗"
+    echo "⚠️ Interface $L_INTERFACE does not have an IP address"
+  fi
+  
+  # Check if the interface is actually up
+  if ip link show "$L_INTERFACE" | grep -q "state UP"; then
+    echo "Interface Status: UP ✓"
+  else
+    echo "⚠️ Interface Status: DOWN ✗"
+  fi
+  
+  # Handle WireGuard status
+  if [ -n "$L_WG_INTERFACE" ]; then
+    if [ $wg_config_exists -eq 1 ]; then
+      if [ $wg_active -eq 1 ]; then
+        local wg_ip
+        wg_ip=$(ip -4 addr show "$L_WG_INTERFACE" 2>/dev/null | grep -oP 'inet \K[\d.]+')
+        
+        if [ -n "$wg_ip" ]; then
+          echo "WireGuard:    $L_WG_INTERFACE ($wg_ip) ✓"
+        else
+          echo "WireGuard:    $L_WG_INTERFACE (NO IP ADDRESS) ⚠️"
+        fi
+        
+        # Test WireGuard connectivity
+        if ping -c 1 -W 3 -I "$L_WG_INTERFACE" 8.8.8.8 &>/dev/null; then
+          echo "WireGuard Connection: WORKING ✓"
+        else
+          echo "⚠️ WireGuard Connection: NOT WORKING ✗"
+          echo "  - Check your WireGuard configuration"
+          echo "  - Make sure the WireGuard server is reachable"
+        fi
+      else
+        echo "⚠️ WireGuard:    $L_WG_INTERFACE (NOT ACTIVE) ✗"
+      fi
+    else
+      echo "⚠️ WireGuard:    Configuration not found for $L_WG_INTERFACE ✗"
+    fi
+  fi
+  
+  # Test internet connectivity through the main connection
+  local internet_status
+  if ping -c 1 -W 3 8.8.8.8 &>/dev/null; then
+    echo "Internet:     AVAILABLE ✓"
+  else
+    echo "Internet:     NOT AVAILABLE ✗"
+    
+    # Check for specific network issues
+    local default_route
+    default_route=$(ip route | grep default)
+    if [ -z "$default_route" ]; then
+      echo "  - No default route found"
+    fi
+    
+    local dns_servers
+    dns_servers=$(grep nameserver /etc/resolv.conf)
+    if [ -z "$dns_servers" ]; then
+      echo "  - No DNS servers configured"
+    fi
+  fi
+  
+  # Show resolutions for common issues
+  if [ "$L_MODE" == "client" ] && ! nmcli -t -f NAME c show --active | grep -q "$L_SSID"; then
+    echo ""
+    echo "📋 Troubleshooting:"
+    echo "  - Check SSID spelling: '$L_SSID'"
+    echo "  - Verify WiFi password is correct"
+    echo "  - Make sure you're in range of the network"
+    echo "  - Try running: sudo nmcli dev wifi connect \"$L_SSID\" password \"$L_PASSWORD\" ifname $L_INTERFACE"
+  fi
+  
+  if [ -n "$L_WG_INTERFACE" ] && [ $wg_active -ne 1 ]; then
+    echo ""
+    echo "📋 WireGuard Troubleshooting:"
+    echo "  - Check that config exists: /etc/wireguard/${L_WG_INTERFACE}.conf"
+    echo "  - Try manually: sudo wg-quick up $L_WG_INTERFACE"
+  fi
+  
+  echo ""
+  echo "To view detailed status: $0 status"
+  echo "To view connection logs: journalctl -u NetworkManager --no-pager | tail -30"
+  echo "======================================="
 }
 
 sync_bypass_with_dhcp() {
@@ -1239,8 +1590,294 @@ deduplicate_saved_configs() {
   echo "Saved configuration deduplication finished."
 }
 
+# Interactive setup function
+interactive_setup() {
+  echo "====================================="
+  echo "🔧 Interactive WORK-HIVE Setup Wizard"
+  echo "====================================="
+  echo "Enter parameters for network setup (or press Enter for defaults)"
+  
+  # Ask for mode with default (hotspot)
+  echo ""
+  echo "Mode options:"
+  echo "  hotspot - Create a WiFi access point (default)"
+  echo "  client  - Connect to an existing WiFi network"
+  read -p "Mode [default: hotspot]: " L_MODE
+  L_MODE=${L_MODE:-"hotspot"}
+  case "$L_MODE" in
+    hotspot|client) ;;
+    *) echo "Error: Mode must be 'hotspot' or 'client'. Using default: hotspot"; L_MODE="hotspot" ;;
+  esac
+  
+  # Ask for interface based on mode, with a default
+  echo ""
+  echo "📡 Available network interfaces:"
+  local default_interface=""
+  
+  if [ "$L_MODE" == "hotspot" ]; then
+    # For hotspot mode, only show WiFi interfaces
+    echo "Showing only WiFi interfaces (required for hotspot mode):"
+    # Get the list of WiFi interfaces
+    wifi_interfaces=$(nmcli device | grep "wifi" | grep -v "p2p" | awk '{print $1}')
+    if [ -z "$wifi_interfaces" ]; then
+      echo "No WiFi interfaces found. A WiFi interface is required for hotspot mode."
+      return 1
+    fi
+    nmcli device | grep "wifi" | grep -v "p2p" | awk '{print $1 " (" $2 ")"}'
+    # Set default to first WiFi interface
+    default_interface=$(echo "$wifi_interfaces" | head -n 1)
+    echo "Note: Only WiFi interfaces can be used for creating a hotspot."
+  else
+    # For client mode, show both WiFi and ethernet interfaces
+    nmcli device | grep -E "wifi|ethernet" | awk '{print $1 " (" $2 ")"}'
+    # Set default to first WiFi interface for client mode too
+    default_interface=$(nmcli device | grep "wifi" | grep -v "p2p" | awk '{print $1}' | head -n 1)
+  fi
+  
+  read -p "Interface name [default: $default_interface]: " L_INTERFACE
+  L_INTERFACE=${L_INTERFACE:-"$default_interface"}
+  
+  if [ -z "$L_INTERFACE" ]; then
+    echo "Error: No interface available."
+    return 1
+  fi
+  
+  # Validate that the selected interface is of the correct type for hotspot mode
+  if [ "$L_MODE" == "hotspot" ]; then
+    # Check if the interface is a WiFi interface
+    if ! nmcli device | grep -w "$L_INTERFACE" | grep -q "wifi"; then
+      echo "Error: For hotspot mode, you must select a WiFi interface."
+      echo "Selected interface '$L_INTERFACE' is not a WiFi interface."
+      echo "Available WiFi interfaces:"
+      nmcli device | grep "wifi" | grep -v "p2p" | awk '{print $1 " (" $2 ")"}'
+      return 1
+    else
+      echo "Selected WiFi interface '$L_INTERFACE' is valid for hotspot mode."
+    fi
+  fi
+  
+  # Ask for SSID with default
+  echo ""
+  if [ "$L_MODE" == "hotspot" ]; then
+    read -p "WiFi network name (SSID) to create [default: Capuchino Home]: " L_SSID
+    L_SSID=${L_SSID:-"Capuchino Home"}
+  else
+    echo "Available WiFi networks:"
+    echo "⚠️ Note: SSID is case-sensitive and must match exactly!"
+    
+    # Rescan to ensure we have the latest networks
+    echo "Scanning for networks..."
+    nmcli dev wifi rescan
+    sleep 2
+    
+    # Show available networks with line numbers for easier selection
+    echo "-----------------------------------------"
+    # Get network list with cleaner approach
+    # Step 1: Save only the header (column names) to display first
+    nmcli -f IN-USE,SSID,SIGNAL,BARS,SECURITY dev wifi list | head -1 > /tmp/wifi_headers
+    cat /tmp/wifi_headers
+    
+    # Step 2: Get only the actual networks, excluding headers AND filtering out hidden networks
+    # The grep ensures we remove any line with -- as SSID (hidden networks)
+    nmcli -f IN-USE,SSID,SIGNAL,BARS,SECURITY dev wifi list | 
+      awk 'NR>2' | grep -v " -- " > /tmp/wifi_networks_list
+    
+    # Count actual networks
+    local network_count=$(wc -l < /tmp/wifi_networks_list)
+    
+    if [ "$network_count" -eq 0 ]; then
+      echo "No WiFi networks found. Please check that your WiFi adapter is enabled."
+      return 1
+    fi
+    
+    # Get the currently active network as default if any
+    local default_network=""
+    local default_number=""
+    active_network=$(nmcli -t -f NAME,TYPE c show --active | grep '802-11-wireless' | cut -d: -f1)
+    
+    # Display networks with numbers - start FROM the actual networks, skipping headers
+    nl -w2 -s') ' /tmp/wifi_networks_list > /tmp/wifi_networks_display
+    cat /tmp/wifi_networks_display
+    echo "-----------------------------------------"
+    
+    # Find the currently active network in the list if any
+    if [ -n "$active_network" ]; then
+      # Extract line number of active network
+      default_number=$(grep -n "$active_network" /tmp/wifi_networks_list | cut -d: -f1)
+      if [ -n "$default_number" ]; then
+        echo "Currently connected to: $active_network (network #$default_number)"
+      fi
+    fi
+    
+    echo "Enter the network number (1-$network_count) or the exact SSID name from the list above."
+    if [ -n "$default_number" ]; then
+      read -p "Network selection [default: $default_number ($active_network)]: " network_selection
+      network_selection=${network_selection:-"$default_number"}
+    else
+      read -p "Network selection (number or SSID): " network_selection
+    fi
+    
+    # Check if the input is a number
+    if [[ "$network_selection" =~ ^[0-9]+$ ]]; then
+      # User entered a number, validate it's in range
+      if [ "$network_selection" -lt 1 ] || [ "$network_selection" -gt "$network_count" ]; then
+        echo "Error: Network number must be between 1 and $network_count."
+        return 1
+      fi
+      
+      # Get the network line directly, adjusting for headers in display
+      selected_line=$(sed -n "${network_selection}p" /tmp/wifi_networks_list)
+      
+      # Extract the SSID carefully from the selected line using our improved method
+      # Find signal strength position and extract SSID based on that
+      signal_pos=$(echo "$selected_line" | grep -bo '[0-9]\{1,3\}[[:space:]]\+[▂▄▆█_]\+' | cut -d: -f1)
+      signal_pos=$((signal_pos - 1))
+      
+      # Extract SSID (everything from position 8 to signal_pos)
+      L_SSID=$(echo "$selected_line" | cut -c8-$signal_pos | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      
+      # Handle hidden networks (shown as --)
+      if [ "$L_SSID" == "--" ]; then
+        echo "You selected a hidden network. Please enter the exact SSID:"
+        read -p "Hidden SSID: " L_SSID
+      fi
+      
+      echo "Selected network: '$L_SSID'"
+    else
+      # User entered an SSID directly
+      L_SSID="$network_selection"
+    fi
+    
+    if [ -z "$L_SSID" ]; then
+      echo "Error: SSID is required for client mode."
+      return 1
+    fi
+    
+    # Verify the selected SSID exists in the scan results
+    if ! grep -q "$L_SSID" /tmp/wifi_networks_list; then
+      echo "Warning: The SSID '$L_SSID' was not found in the scan results."
+      echo "Available networks:"
+      cat /tmp/wifi_networks_list | while read line; do
+        # Process each line to extract SSID using same method as above
+        temp_line=$(echo "$line" | sed -E 's/^[ \t]*\*?[ \t]*//')
+        in_use_field=$(echo "$temp_line" | awk '{print $1}')
+        signal_field=$(echo "$temp_line" | awk '{print $(NF-2)}')
+        bars_field=$(echo "$temp_line" | awk '{print $(NF-1)}')
+        security_field=$(echo "$temp_line" | awk '{print $NF}')
+        ssid=$(echo "$temp_line" | sed -E "s/[ ]*$security_field[ ]*$bars_field[ ]*$signal_field[ ]*$//" | sed -E "s/^$in_use_field[ ]*//")
+        echo "  - $ssid"
+      done
+      read -p "Continue anyway? [default: y]: " confirm
+      confirm=${confirm:-"y"}
+      if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        echo "Setup canceled."
+        return 1
+      fi
+    fi
+  fi
+  
+  # Ask for password with default
+  echo ""
+  if [ "$L_MODE" == "hotspot" ]; then
+    read -s -p "WiFi password to set (min 8 chars) [default: HotspotAccess123!]: " L_PASSWORD
+    echo ""
+    L_PASSWORD=${L_PASSWORD:-"HotspotAccess123!"}
+    if [ ${#L_PASSWORD} -lt 8 ]; then
+      echo "Error: Password for hotspot mode must be at least 8 characters long."
+      return 1
+    fi
+  else
+    read -s -p "WiFi password [default for known networks: use stored password]: " L_PASSWORD
+    echo ""
+    # If empty password and it's a known network, we can try to use the stored password
+    if [ -z "$L_PASSWORD" ]; then
+      # Check if we have this network stored in NetworkManager
+      stored_conn=$(nmcli -t -f NAME con | grep -x "$L_SSID" || echo "")
+      if [ -n "$stored_conn" ]; then
+        echo "Using stored password for network '$L_SSID'"
+      else
+        read -p "No password entered and no stored connection. Is this an open network? [default: y]: " confirm_open
+        confirm_open=${confirm_open:-"y"}
+        if [ "$confirm_open" != "y" ] && [ "$confirm_open" != "Y" ]; then
+          echo "Setup canceled. Please run again and provide a password."
+          return 1
+        fi
+        echo "Proceeding with open network connection (no password)."
+      fi
+    fi
+  fi
+  
+  # Ask for config name with default (auto-generated)
+  echo ""
+  read -p "Custom configuration name [default: auto-generated]: " L_CONFIG_NAME
+  # L_CONFIG_NAME is already defaulted to empty in the handle_setup function
+  
+  # Ask for WireGuard interface with default (wg0)
+  echo ""
+  echo "Available WireGuard interfaces:"
+  ls -1 /etc/wireguard/*.conf 2>/dev/null | sed 's/.*\/\(.*\)\.conf/\1/' || echo "None found"
+  read -p "WireGuard interface [default: wg0]: " L_WG_INTERFACE
+  L_WG_INTERFACE=${L_WG_INTERFACE:-"wg0"}
+  
+  # Ask for captive mode with default (off)
+  L_CAPTIVE_MODE="off"
+  if [ "$L_MODE" == "hotspot" ]; then
+    echo ""
+    echo "Captive portal options:"
+    echo "  on      - Force all DNS through this device (captive portal effect)"
+    echo "  off     - Normal DNS resolution (default)"
+    echo "  captive - Full captive portal mode with redirection"
+    read -p "Captive portal mode [default: off]: " captive_input
+    case "$captive_input" in
+      on|off|captive) L_CAPTIVE_MODE="$captive_input" ;;
+      "") L_CAPTIVE_MODE="off" ;;
+      *) echo "Invalid option: $captive_input. Using default: off"; L_CAPTIVE_MODE="off" ;;
+    esac
+  fi
+  
+  # Confirm setup with auto-yes option
+  echo ""
+  echo "====== Configuration Summary ======"
+  if [ "$L_MODE" == "hotspot" ]; then
+    echo "Interface:       $L_INTERFACE (WiFi interface for hotspot)"
+  else
+    echo "Interface:       $L_INTERFACE"
+  fi
+  echo "Mode:            $L_MODE" 
+  echo "SSID:            $L_SSID"
+  echo "Password:        $(echo "$L_PASSWORD" | sed 's/./*/g') (hidden)"
+  echo "Config Name:     ${L_CONFIG_NAME:-"<auto-generated>"}"
+  echo "WireGuard:       ${L_WG_INTERFACE:-"none"}"
+  if [ "$L_MODE" == "hotspot" ]; then
+    echo "Captive Mode:    $L_CAPTIVE_MODE"
+  fi
+  echo "=================================="
+  
+  read -p "Proceed with setup? [default: y]: " confirm
+  confirm=${confirm:-"y"}
+  if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+    echo "Setup canceled."
+    return 1
+  fi
+  
+  # Call handle_setup with the parameters
+  handle_setup "$L_INTERFACE" "$L_MODE" "$L_SSID" "$L_PASSWORD" "$L_CAPTIVE_MODE" "$L_CONFIG_NAME" "$L_WG_INTERFACE"
+  ensure_hairpin_nat
+  
+  # Clean up temporary files
+  rm -f /tmp/wifi_networks_display /tmp/wifi_networks_raw /tmp/wifi_networks_list /tmp/wifi_headers 2>/dev/null
+  return 0
+}
+
 # MAIN
-case "$1" in
+# Check if no arguments were provided
+if [ "$#" -eq 0 ]; then
+  # When called with no parameters, run the interactive setup
+  interactive_setup
+  exit $?
+fi
+
+case "${1:-}" in
   --current)
     show_current_setup
     ;;
@@ -1350,12 +1987,8 @@ case "$1" in
     show_status
     ;;
   *)
-    if [ $# -eq 0 ]; then
-      select_config
-    else
-      echo "Invalid option: $1"
-      print_help
-      exit 1
-    fi
+    echo "Invalid option: $1"
+    print_help
+    exit 1
     ;;
 esac
