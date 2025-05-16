@@ -1,55 +1,60 @@
-# WorkHive - for Raspberry Pi
+# 🚀 Workhive — Self-Hosted SaaS Hotspot for Raspberry Pi
 
-Workhive — Self-Hosted SaaS Hotspot for Raspberry Pi
+> **Raspberry Pi + 5G + Public IP = Your portable, zero-cloud app server**  
+> _Powered by your phone’s 5G. Secured by WireGuard. Exposed via [Setip.io](https://setip.io)._
 
-Raspberry Pi + 5G + Public IP = Your portable, zero-cloud app server
-Powered by your phone’s 5G. Secured by WireGuard. Exposed via Setip.io.
+---
 
-⸻
+Workhive turns any **Raspberry Pi 4B or newer** into a powerful, portable SaaS server and encrypted hotspot.  
+Tethered to an iPhone or Android device, your Pi gets a **real public IP** and can run apps with **zero cloud dependency** — perfect for startups, remote teams, hackers, or privacy-first developers.
 
-Workhive transforms any Raspberry Pi 4B or newer into a fully decentralized, public-facing SaaS server. Tether it to your phone, power it via USB, and instantly deploy real services with a public IP and domain—no cloud provider, VPN, or port forwarding required.
+With seamless integration to [Setip.io](https://setip.io), your Raspberry Pi receives a **globally routable IP and subdomain** (e.g. `myapp.setip.io`) — no NAT traversal, port forwarding, or VPNs required.
 
-Built for developers, remote teams, digital nomads, and self-hosting pros.
+---
 
-⸻
+## ✨ Why Workhive?
 
-✨ Why Workhive?
-	•	🌍 Public IP with zero config
-Your Pi gets a live IPv4/IPv6 address and a yourname.setip.io domain through Setip.io—no static IP, no NAT, no fuss.
-	•	🔐 Zero-trust team access
-Collaborate with teammates over insecure public networks using encrypted WireGuard tunnels. Share apps securely, anywhere.
-	•	💻 Edge-first SaaS deployment
-Host dashboards, devtools, or full microservices on the Pi, with secure public access—without touching AWS, Heroku, or DigitalOcean.
-	•	⚡ Minimal power, maximum reach
-Runs on standard USB power from your laptop, car, or power bank. Stay operational even off-grid.
+- 🌍 **Public IP with zero config**  
+  Get instant access to your Pi from anywhere using Setip.io. Skip static IPs, skip the cloud.
 
-⸻
+- 🔐 **Zero-trust connectivity for teams**  
+  Secure communication between team members across insecure networks using WireGuard and identity-based access control.
 
-🚀 Use Cases
-	•	⚒️ Rapidly prototype and deploy apps from a Pi
-	•	🧑‍💻 Create a shared team environment in minutes
-	•	🌐 Host private tools with zero cloud cost
-	•	🧳 Work from remote areas with 5G + real routing
-	•	🛰️ Power decentralized services in disaster or disconnected zones
+- 🧱 **Decentralized SaaS hosting**  
+  Run real services, internal tools, or entire startup stacks right from your Pi — for less than the cost of a small cloud VM.
 
-⸻
+- ⚡ **Low-power, mobile-first design**  
+  USB-powered and tethered to your phone, Workhive is ideal for field operations, travel, or off-grid locations.
 
-🔧 Core Features
-	•	🌐 Public IP exposure via Setip.io
-	•	📶 Wi-Fi Hotspot Mode with captive portal + DNS allowlisting
-	•	🔐 End-to-end encryption using WireGuard
-	•	⚙️ Dual-mode networking (hotspot + client simultaneously)
-	•	🧾 QR code generation for Wi-Fi and VPN access
-	•	💬 Interactive CLI for full control
-	•	🔁 Auto-start on boot with systemd
-	•	🔒 Device authorization + monitoring
-	•	🧪 Built-in diagnostics & test framework
-	•	⚡ Low power draw, USB-powered for mobile use
+---
 
-🧪 Example: Your Pi is tethered to your phone in a rural area. Your app is reachable at myapp.setip.io, fully secured. Teammates collaborate from anywhere—encrypted, authenticated, and without paying for a single cloud VM.
+## 🛠️ Use Cases
 
-⸻
+- ⚒️ Launch production-ready apps without cloud bills  
+- 🧑‍💻 Share a secure team environment anywhere  
+- 🛰️ Deploy edge services in disconnected zones  
+- 🧳 Travel with your entire dev environment on a Pi  
+- 🛠️ Demo apps live from your phone — no cloud needed
 
+---
+
+## ⚙️ Core Features
+
+- 🌐 **Public IP + DNS** via [Setip.io](https://setip.io) — works behind any carrier NAT  
+- 📡 **Wi-Fi Access Point** with captive portal and DNS exception handling  
+- 🔐 **End-to-end encryption** using WireGuard  
+- 🛡️ **Zero-trust peer access** — secure traffic even across hostile networks  
+- 🧾 **QR Code Sharing** for Wi-Fi and VPN credentials  
+- 🧠 **Interactive CLI** — full control from the terminal  
+- 🔁 **Systemd service** — automatic startup on boot  
+- 💾 **Config export/import** for easy backup and replication  
+- 📊 **Diagnostics and live status tools**
+
+---
+
+> 💡 **Example:** You're in a remote location with just your phone and Pi. You tether your phone, start Workhive, and your teammate connects to your app via `myapp.setip.io` — encrypted, authenticated, and cloud-free.
+
+---
 
 The primary goal of this project is to create a portable, low-power travel router using a Raspberry Pi that offers:
 
