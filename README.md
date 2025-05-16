@@ -1,9 +1,7 @@
 # WorkHive - for Raspberry Pi
 
 
-Workhive
-
-Your portable, public-facing SaaS server—powered by a Raspberry Pi and your phone’s 5G.
+Workhive is your portable, public-facing SaaS server—powered by a Raspberry Pi and your phone’s 5G.
 
 Workhive transforms any Raspberry Pi 4B (or newer) into a secure mobile hotspot and self-hosted app server. Tethered to an iPhone or Android phone, your Pi becomes a decentralized infrastructure node—ideal for startups, field teams, or privacy-focused developers.
 
