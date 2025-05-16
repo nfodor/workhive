@@ -1,31 +1,55 @@
 # WorkHive - for Raspberry Pi
 
+Workhive — Self-Hosted SaaS Hotspot for Raspberry Pi
 
-Workhive is your portable, public-facing SaaS server—powered by a Raspberry Pi and your phone’s 5G.
-
-Workhive transforms any Raspberry Pi 4B (or newer) into a secure mobile hotspot and self-hosted app server. Tethered to an iPhone or Android phone, your Pi becomes a decentralized infrastructure node—ideal for startups, field teams, or privacy-focused developers.
-
-Thanks to built-in Setip.io integration, your Pi receives a globally routable public IP address—no NAT, no VPN, no static IP needed. Apps running on your Pi can be accessed instantly via a public domain (e.g. myapp.setip.io), with encrypted routing and full zero-trust security.
-
-Deploy a fully decentralized SaaS stack—at a fraction of the cost of traditional cloud hosting.
-
-Use Cases
-	•	Launch a production-ready app in minutes—without cloud bills
-	•	Set up a shared team environment that works securely across any network
-	•	Host private dashboards, developer tools, or collaboration platforms
-	•	Travel with a fully functional stack that runs on 5G, with no setup required
-
-Core Features
-	•	Public IP exposure with zero config (via Setip.io)
-	•	Wi-Fi access point with captive portal and DNS exception handling
-	•	Zero-trust team connectivity: peers connect securely, even over hostile networks
-	•	Full SaaS app hosting directly on the Pi
-	•	End-to-end encrypted tunneling with WireGuard
-	•	Works anywhere, tethered to any phone with a data plan
-
-Example: You’re in a remote location. Your Pi is tethered to your phone. A teammate in another country connects securely to your app via its public Setip.io subdomain. Everyone stays encrypted, authenticated, and cloud-free.
+Raspberry Pi + 5G + Public IP = Your portable, zero-cloud app server
+Powered by your phone’s 5G. Secured by WireGuard. Exposed via Setip.io.
 
 ⸻
+
+Workhive transforms any Raspberry Pi 4B or newer into a fully decentralized, public-facing SaaS server. Tether it to your phone, power it via USB, and instantly deploy real services with a public IP and domain—no cloud provider, VPN, or port forwarding required.
+
+Built for developers, remote teams, digital nomads, and self-hosting pros.
+
+⸻
+
+✨ Why Workhive?
+	•	🌍 Public IP with zero config
+Your Pi gets a live IPv4/IPv6 address and a yourname.setip.io domain through Setip.io—no static IP, no NAT, no fuss.
+	•	🔐 Zero-trust team access
+Collaborate with teammates over insecure public networks using encrypted WireGuard tunnels. Share apps securely, anywhere.
+	•	💻 Edge-first SaaS deployment
+Host dashboards, devtools, or full microservices on the Pi, with secure public access—without touching AWS, Heroku, or DigitalOcean.
+	•	⚡ Minimal power, maximum reach
+Runs on standard USB power from your laptop, car, or power bank. Stay operational even off-grid.
+
+⸻
+
+🚀 Use Cases
+	•	⚒️ Rapidly prototype and deploy apps from a Pi
+	•	🧑‍💻 Create a shared team environment in minutes
+	•	🌐 Host private tools with zero cloud cost
+	•	🧳 Work from remote areas with 5G + real routing
+	•	🛰️ Power decentralized services in disaster or disconnected zones
+
+⸻
+
+🔧 Core Features
+	•	🌐 Public IP exposure via Setip.io
+	•	📶 Wi-Fi Hotspot Mode with captive portal + DNS allowlisting
+	•	🔐 End-to-end encryption using WireGuard
+	•	⚙️ Dual-mode networking (hotspot + client simultaneously)
+	•	🧾 QR code generation for Wi-Fi and VPN access
+	•	💬 Interactive CLI for full control
+	•	🔁 Auto-start on boot with systemd
+	•	🔒 Device authorization + monitoring
+	•	🧪 Built-in diagnostics & test framework
+	•	⚡ Low power draw, USB-powered for mobile use
+
+🧪 Example: Your Pi is tethered to your phone in a rural area. Your app is reachable at myapp.setip.io, fully secured. Teammates collaborate from anywhere—encrypted, authenticated, and without paying for a single cloud VM.
+
+⸻
+
 
 The primary goal of this project is to create a portable, low-power travel router using a Raspberry Pi that offers:
 
