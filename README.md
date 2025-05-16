@@ -1,14 +1,27 @@
-# WiFi Manager
+# WorkHive - WiFi Manager
 
-A comprehensive network management solution for Raspberry Pi and other Linux systems. This tool provides a TypeScript/JavaScript implementation of various network management features with both CLI and interactive modes.
+A comprehensive solution for transforming your Raspberry Pi 4B and newer into a powerful, portable travel router. When connected to an iPhone or Android phone, this turns your Raspberry Pi into an advanced networking hub with powerful capabilities. This tool provides a TypeScript/JavaScript implementation designed for travelers, remote workers, and tech enthusiasts who need a reliable, secure networking solution on the go.
+
+## Project Goal
+
+The primary goal of this project is to create a portable, low-power travel router using a Raspberry Pi that offers:
+
+- **Mobile Hotspot**: Turn your Pi into a WiFi access point with advanced access control
+- **Low Power Consumption**: Optimized for operation with standard USB power supplies (no need for 5V/5A supply on Pi5)
+- **Public IP Address**: Automated integration with setip.io for obtaining a public IP
+- **Encrypted Traffic**: WireGuard VPN tunneling for all network traffic
+- **Dual Mode Operation**: Function as either a router or a client device
 
 ## Features
 
+- 🔌 **Low Power Operation**: Works with standard USB power sources, including car chargers and power banks
+- 🌐 **Public IP via setip.io**: Automated connection and configuration with setip.io service
+- 🔄 **Multi-Mode Support**: Function as a hotspot, client, or both (with additional WiFi adapter)
+- 🔒 **WireGuard Integration**: All traffic from local network encrypted and routed through WireGuard tunnel
 - 📱 **QR Code Generation**: Share network credentials easily via QR codes
 - 📊 **Signal Strength Visualization**: Visual signal strength indicators
-- 🔒 **WireGuard VPN Support**: Full VPN management built-in
 - 💾 **Configuration Management**: Save and restore network profiles
-- 🔐 **Device Authorization**: Control which devices can connect
+- 🔐 **Device Authorization**: Fine-grained control over which devices can connect
 - 🚀 **Systemd Service**: Automatic startup on boot
 - 🖥️ **Interactive CLI**: Feature-rich command-line interface
 
@@ -58,9 +71,10 @@ wifi-manager
 This will start an interactive menu where you can:
 - Scan for networks
 - Connect to networks
-- Manage network configurations
-- Set up and control VPN connections
+- Create or manage a WiFi hotspot
+- Set up and control WireGuard VPN connections with setip.io
 - View system status
+- Manage device access control
 - And more...
 
 ### Command-Line Interface
@@ -69,34 +83,35 @@ This will start an interactive menu where you can:
 # Get help
 wifi-manager --help
 
-# Scan for networks
+# Scan for networks (client mode)
 wifi-manager scan
 
-# Scan with interactive selection
+# Scan with interactive selection and connect
 wifi-manager scan -i
 
-# Connect to a network
+# Connect to a network (client mode)
 wifi-manager connect "MyNetwork" -p "MyPassword"
 
 # Show current status
 wifi-manager status
 
-# Show detailed status
+# Show detailed status including power consumption
 wifi-manager status --detailed
 
-# Start a hotspot
+# Start a hotspot (access point mode)
 wifi-manager hotspot "MyHotspot" "MyPassword"
 
-# Manage configurations
+# Manage network configurations
 wifi-manager config list
 wifi-manager config save myconfig
 wifi-manager config activate myconfig
 wifi-manager config export -f myexport.json
 wifi-manager config import myexport.json
 
-# WireGuard VPN management
+# WireGuard VPN management with setip.io integration
 wifi-manager vpn status
-wifi-manager vpn start -c config.json
+wifi-manager vpn start --setip  # Use setip.io for public IP
+wifi-manager vpn start -c config.json  # Use custom config
 wifi-manager vpn stop
 wifi-manager vpn export -f myvpn.json
 wifi-manager vpn import myvpn.json
@@ -105,14 +120,32 @@ wifi-manager vpn import myvpn.json
 wifi-manager debug
 wifi-manager debug --deep
 
-# View connected devices (when in hotspot mode)
+# View and manage connected devices (when in hotspot mode)
 wifi-manager devices list
-wifi-manager devices details 192.168.4.10  # IP address of connected device
-
-# Network configurations import/export
-wifi-manager config export -f backup.json
-wifi-manager config import backup.json
+wifi-manager devices authorize "Device Name" 192.168.4.10
+wifi-manager devices revoke "Device Name"
 ```
+
+## Dual Mode Operation
+
+The WiFi Manager supports multiple operational modes:
+
+- **Hotspot Mode**: Create a WiFi access point for multiple devices to connect
+- **Client Mode**: Connect to existing WiFi networks when using the Pi as a desktop/portable machine
+- **Dual Mode**: With a second WiFi controller, operate as both client and hotspot simultaneously
+
+> **Note**: Dual mode operation with a second WiFi controller has not been thoroughly tested under various power conditions.
+
+## WireGuard VPN Integration with setip.io
+
+All traffic from your local WiFi network is encrypted and tunneled through WireGuard VPN:
+
+- Automatic connection to setip.io for obtaining a public IP address
+- All network traffic exits through the setip.io public IP address
+- Incoming connections can be routed through the same IP address
+- Full encryption provides security when using public WiFi hotspots
+
+WireGuard configuration is fully integrated with the WiFi management system for a seamless experience.
 
 ## Security Features
 
