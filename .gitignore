@@ -2,7 +2,6 @@
 *.tmp
 *.bak
 *.swp 
-nodejs/src/cli.ts
 node_modules/
 dist/
 build/
@@ -17,3 +16,7 @@ coverage/
 .idea/
 .vscode/
 .DS_Store
+# Test results
+test-results/
+# Export files
+wifi_exports/
