@@ -1,4 +1,4 @@
-# WorkHive - WiFi Manager
+# WorkHive - Free Professional Travel Router for Raspberry Pi
 
 A comprehensive solution for transforming your Raspberry Pi 4B and newer into a powerful, portable travel router. When connected to an iPhone or Android phone, this turns your Raspberry Pi into an advanced networking hub with powerful capabilities. This tool provides a TypeScript/JavaScript implementation designed for travelers, remote workers, and tech enthusiasts who need a reliable, secure networking solution on the go.
 
