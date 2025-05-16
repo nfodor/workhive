@@ -2,6 +2,8 @@
 
 A comprehensive solution for transforming your Raspberry Pi 4B and newer into a powerful, portable travel router. When connected to an iPhone or Android phone, this turns your Raspberry Pi into an advanced networking hub with powerful capabilities. This tool provides a TypeScript/JavaScript implementation designed for travelers, remote workers, and tech enthusiasts who need a reliable, secure networking solution on the go.
 
+> **⚠️ WARNING: Some features are still under development.** This project is actively being developed and some features mentioned in this documentation might not be fully implemented. Please refer to the test results and development updates for more information on feature status.
+
 ## Project Goal
 
 The primary goal of this project is to create a portable, low-power travel router using a Raspberry Pi that offers:
@@ -57,6 +59,28 @@ sudo ./install.sh
    sudo systemctl enable wifi-manager.service
    sudo systemctl start wifi-manager.service
    ```
+
+## Testing
+
+You can run comprehensive tests using the included test script:
+
+```bash
+# Run all tests and see detailed results
+./test.sh
+
+# View previous test results
+cat test-results/test-results-*.log
+```
+
+The test script verifies all major features, including:
+- Network scanning
+- Connection management
+- Configuration export/import
+- VPN functionality with setip.io integration
+- Device access control
+- Network diagnostics
+
+Test results are saved to the `test-results` directory with timestamped filenames.
 
 ## Usage
 

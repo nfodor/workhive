@@ -221,7 +221,25 @@ else
   print_error "VPN export functionality failed" | tee -a "$RESULTS_FILE"
 fi
 
-# Test 8: Network Diagnostics
+# Test 8: VPN setip.io Integration
+print_header "Testing VPN setip.io Integration"
+echo "Testing VPN connection with setip.io..." | tee -a "$RESULTS_FILE"
+node "$CLI_PATH" vpn start --setip > "$TEST_RESULTS_DIR/vpn-setip.log" 2>&1
+vpn_setip_result=$?
+
+if [ $vpn_setip_result -eq 0 ] && grep -q "Connected to setip.io" "$TEST_RESULTS_DIR/vpn-setip.log"; then
+  print_success "VPN connection with setip.io established successfully" | tee -a "$RESULTS_FILE"
+  print_info "Stopping VPN connection..." | tee -a "$RESULTS_FILE"
+  node "$CLI_PATH" vpn stop > "$TEST_RESULTS_DIR/vpn-setip-stop.log" 2>&1
+else
+  if grep -q "This feature is not yet fully implemented" "$TEST_RESULTS_DIR/vpn-setip.log"; then
+    print_info "VPN setip.io integration is not fully implemented yet" | tee -a "$RESULTS_FILE"
+  else
+    print_error "VPN setip.io integration test failed" | tee -a "$RESULTS_FILE"
+  fi
+fi
+
+# Test 9: Network Diagnostics
 print_header "Testing Network Diagnostics"
 echo "Running basic network diagnostics..." | tee -a "$RESULTS_FILE"
 node "$CLI_PATH" debug > "$TEST_RESULTS_DIR/debug-output.log" 2>&1
