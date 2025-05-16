@@ -1,0 +1,17 @@
+[Unit]
+Description=WiFi Management Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /home/pi/scripts/setwifi/nodejs/dist/index.js
+# Alternative: Use CLI for specific mode if needed
+# ExecStart=/usr/bin/node /home/pi/scripts/setwifi/nodejs/dist/cli.js status
+WorkingDirectory=/home/pi/scripts/setwifi/nodejs
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=root
+Environment=PATH=/usr/bin:/usr/local/bin:/sbin:/usr/sbin
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 import { NetworkControl } from './services/network-control.service';
-import { generateSignalBars, generateNetworkQR, generateWireGuardQR } from './utils/display.util';
+import { 
+  generateSignalBars, 
+  generateNetworkQR, 
+  generateWireGuardQR, 
+  colorize,
+  formatSectionHeader,
+  formatStatusLine,
+  formatVpnStatus,
+  getPublicIp
+} from './utils/display.util';
+import { displayFormattedStatus } from './utils/status-formatter.util';
 import { program } from 'commander';
 import { executeCommand } from './utils/command.util';
 import readline from 'readline';
@@ -33,6 +43,7 @@ async function interactiveMode() {
     console.log('0. Exit');
   }
 
+  const networkControl = new NetworkControl();
   let running = true;
 
   while (running) {
@@ -139,143 +150,108 @@ async function interactiveMode() {
         }
 
         case '6': {
-          console.log('\n=== WiFi Status ===');
+          console.log(colorize('\nFetching network status...', 'cyan'));
           const status = await networkControl.getStatus();
           const vpnStatus = await networkControl.getWireGuardStatus();
           
-          if (!status.connected) {
-            console.log('Status: Disconnected');
-            console.log('Mode:', status.mode);
-          } else {
-            console.log('Status: Connected');
-            console.log('SSID:', status.ssid);
-            console.log('Mode:', status.mode);
+          // Get saved configurations to show most recent
+          let savedConfigs: { id: string; config: any }[] = [];
+          try {
+            savedConfigs = await networkControl.listConfigs();
+          } catch (error) {
+            // Ignore errors when loading configs
+          }
+          
+          // Try to find matching saved configuration
+          const matchingConfig = status.ssid ? 
+            savedConfigs.find(c => c.config.ssid === status.ssid && c.config.mode === (status.mode === 'ap' ? 'hotspot' : 'client')) : 
+            undefined;
+          
+          // Use the formatted status display
+          await displayFormattedStatus(status, vpnStatus, matchingConfig, true);
             
-            if (status.signal) {
-              const signalBars = generateSignalBars(status.signal);
-              console.log(`Signal Strength: ${signalBars} (${status.signal}%)`);
-            }
-            
-            if (status.freq) console.log('Frequency:', status.freq);
-            if (status.bitrate) console.log('Bitrate:', status.bitrate);
-            if (status.security?.length) console.log('Security:', status.security.join(', '));
-            if (status.ipAddress) console.log('IP Address:', status.ipAddress);
-            if (status.gateway) console.log('Gateway:', status.gateway);
-
-            // Get additional system information
-            try {
-              const { stdout: uptimeInfo } = await executeCommand('uptime');
-              console.log('\nSystem Uptime:', uptimeInfo.trim());
-              
-              const { stdout: memInfo } = await executeCommand('free -h');
-              console.log('\nMemory Usage:');
-              console.log(memInfo);
-              
-              const { stdout: wifiInfo } = await executeCommand('iwconfig wlan0');
-              console.log('\nWiFi Interface Details:');
-              console.log(wifiInfo);
-            } catch (err) {
-              // Just skip additional info if command fails
-            }
-
-            // Show QR code based on connection mode
-            if (status.ssid) {
-              if (status.mode === 'ap') {
-                console.log('\nHotspot Share QR Code:');
-                console.log('Scan this code with a mobile device to connect to your hotspot:');
+          // Show QR code based on connection mode
+          if (status.ssid) {
+            if (status.mode === 'ap') {
+              console.log('\nHotspot Share QR Code:');
+              console.log('Scan this code with a mobile device to connect to your hotspot:');
+              try {
+                // Try to get the hotspot password using our dedicated method
+                let password;
                 try {
-                  // Try to get the hotspot password using our dedicated method
-                  console.log('Retrieving hotspot credentials...');
-                  let password;
+                  password = await networkControl.getHotspotPassword(status.ssid);
+                } catch (passwordErr) {
                   try {
-                    password = await networkControl.getHotspotPassword(status.ssid);
-                  } catch (passwordErr) {
-                    console.log('Failed to retrieve password with primary method, trying alternative...');
-                    try {
-                      // Fallback to direct connection file lookup
-                      const { stdout: connInfo } = await executeCommand(`sudo grep -r "psk=" /etc/NetworkManager/system-connections/ | grep -i "${status.ssid}"`);
-                      const passwordMatch = connInfo.match(/psk=([^\s]+)/);
-                      if (passwordMatch && passwordMatch[1]) {
-                        password = passwordMatch[1];
-                      }
-                    } catch (fallbackErr) {
-                      // Both methods failed
+                    // Fallback to direct connection file lookup
+                    const { stdout: connInfo } = await executeCommand(`sudo grep -r "psk=" /etc/NetworkManager/system-connections/ | grep -i "${status.ssid}"`);
+                    const passwordMatch = connInfo.match(/psk=([^\s]+)/);
+                    if (passwordMatch && passwordMatch[1]) {
+                      password = passwordMatch[1];
                     }
+                  } catch (fallbackErr) {
+                    // Both methods failed
                   }
+                }
+                
+                if (password) {
+                  await generateNetworkQR(status.ssid, password);
                   
-                  if (password) {
-                    console.log('Connection credentials found - generating QR code...');
-                    await generateNetworkQR(status.ssid, password);
-                    
-                    // Show connected devices count if in hotspot mode
-                    const devices = await networkControl.getConnectedDevices();
-                    if (devices.length > 0) {
-                      console.log(`\nDevices connected to hotspot: ${devices.length}`);
-                      console.log('Select option 10 from the main menu to view connected devices');
-                    } else {
-                      console.log('\nNo devices currently connected to hotspot');
-                    }
+                  // Show connected devices count if in hotspot mode
+                  const devices = await networkControl.getConnectedDevices();
+                  if (devices.length > 0) {
+                    console.log(`\nDevices connected to hotspot: ${devices.length}`);
+                    console.log('Select option 10 from the main menu to view connected devices');
                   } else {
-                    console.log('Could not retrieve password - QR code will only contain SSID');
-                    await generateNetworkQR(status.ssid);
+                    console.log('\nNo devices currently connected to hotspot');
                   }
-                } catch (err) {
-                  console.log('Error generating QR code - showing SSID only');
+                } else {
+                  console.log('Could not retrieve password - QR code will only contain SSID');
                   await generateNetworkQR(status.ssid);
                 }
-              } else {
-                // In client mode - show current connection QR code
-                console.log('\nWiFi Connection QR Code:');
-                console.log('Scan this code to connect to the same network:');
+              } catch (err) {
+                console.log('Error generating QR code - showing SSID only');
+                await generateNetworkQR(status.ssid);
+              }
+            } else {
+              // In client mode - show current connection QR code
+              console.log('\nWiFi Connection QR Code:');
+              console.log('Scan this code to connect to the same network:');
+              try {
+                // Try multiple methods to get the password for the current client connection
+                let password;
                 try {
-                  // Try multiple methods to get the password for the current client connection
-                  let password;
+                  // Method 1: Try using nmcli with -s (secret) flag
+                  const { stdout: nmcliInfo } = await executeCommand(`nmcli -s -g 802-11-wireless-security.psk connection show "${status.ssid}"`);
+                  if (nmcliInfo && nmcliInfo.trim()) {
+                    password = nmcliInfo.trim();
+                  }
+                } catch (e) {
+                  // If first method fails, try the second method
                   try {
-                    // Method 1: Try using nmcli with -s (secret) flag
-                    const { stdout: nmcliInfo } = await executeCommand(`nmcli -s -g 802-11-wireless-security.psk connection show "${status.ssid}"`);
-                    if (nmcliInfo && nmcliInfo.trim()) {
-                      password = nmcliInfo.trim();
+                    // Method 2: Try reading from connection file directly
+                    const { stdout: connInfo } = await executeCommand(`sudo cat /etc/NetworkManager/system-connections/"${status.ssid}".nmconnection | grep psk=`);
+                    const passwordMatch = connInfo.match(/psk=(.+)/);
+                    if (passwordMatch && passwordMatch[1]) {
+                      password = passwordMatch[1];
                     }
-                  } catch (e) {
-                    // If first method fails, try the second method
-                    try {
-                      // Method 2: Try reading from connection file directly
-                      const { stdout: connInfo } = await executeCommand(`sudo cat /etc/NetworkManager/system-connections/"${status.ssid}".nmconnection | grep psk=`);
-                      const passwordMatch = connInfo.match(/psk=(.+)/);
-                      if (passwordMatch && passwordMatch[1]) {
-                        password = passwordMatch[1];
-                      }
-                    } catch (innerErr) {
-                      // Both methods failed, continue without password
-                    }
+                  } catch (innerErr) {
+                    // Both methods failed, continue without password
                   }
-                  
-                  // Generate QR code with or without password
-                  if (password) {
-                    console.log("Network password found - QR code includes credentials");
-                    await generateNetworkQR(status.ssid, password);
-                  } else {
-                    console.log("Network password not available - QR code includes SSID only");
-                    await generateNetworkQR(status.ssid);
-                  }
-                } catch (err) {
-                  console.log("Failed to generate QR code with credentials - showing SSID only");
+                }
+                
+                // Generate QR code with or without password
+                if (password) {
+                  console.log("Network password found - QR code includes credentials");
+                  await generateNetworkQR(status.ssid, password);
+                } else {
+                  console.log("Network password not available - QR code includes SSID only");
                   await generateNetworkQR(status.ssid);
                 }
+              } catch (err) {
+                console.log("Failed to generate QR code with credentials - showing SSID only");
+                await generateNetworkQR(status.ssid);
               }
             }
-          }
-
-          if (vpnStatus.active) {
-            console.log('\n=== VPN Status ===');
-            console.log('Status: Connected');
-            if (vpnStatus.endpoint) console.log('Endpoint:', vpnStatus.endpoint);
-            if (vpnStatus.transferRx) console.log('Data Received:', vpnStatus.transferRx);
-            if (vpnStatus.transferTx) console.log('Data Sent:', vpnStatus.transferTx);
-            if (vpnStatus.lastHandshake) console.log('Last Handshake:', vpnStatus.lastHandshake);
-          } else {
-            console.log('\n=== VPN Status ===');
-            console.log('Status: Disconnected');
           }
           break;
         }
@@ -316,20 +292,17 @@ async function interactiveMode() {
             }
             
             case '2': {
-              const status = await networkControl.getWireGuardStatus();
-              if (!status.active) {
-                console.log('\nVPN Status: Disconnected');
-              } else {
-                console.log('\nVPN Status: Connected');
-                if (status.endpoint) console.log('Endpoint:', status.endpoint);
-                if (status.transferRx) console.log('Data Received:', status.transferRx);
-                if (status.transferTx) console.log('Data Sent:', status.transferTx);
-                if (status.lastHandshake) console.log('Last Handshake:', status.lastHandshake);
-                
+              const vpnStatus = await networkControl.getWireGuardStatus();
+              
+              console.log(formatSectionHeader('VPN STATUS'));
+              const vpnStatusLines = formatVpnStatus(vpnStatus);
+              vpnStatusLines.forEach(line => console.log(line));
+              
+              if (vpnStatus.active) {
                 // Show routing information for VPN
                 try {
                   const { stdout: routeInfo } = await executeCommand('ip route show | grep wg0');
-                  console.log('\nVPN Routing:');
+                  console.log('\n' + colorize('VPN Routing:', 'bold'));
                   console.log(routeInfo);
                 } catch (err) {
                   // Just skip if command fails
@@ -347,6 +320,7 @@ async function interactiveMode() {
             
             case '4': {
               console.log('\nExporting WireGuard configuration...');
+              console.log('The private key will be encrypted for security.');
               const customFileName = await question('Enter custom filename (leave empty for default): ');
               const filePath = await networkControl.exportWireGuardConfig(customFileName || undefined);
               
@@ -361,6 +335,7 @@ async function interactiveMode() {
             case '5': {
               const filePath = await question('Enter the path to the exported configuration file: ');
               console.log(`\nImporting WireGuard configuration from: ${filePath}`);
+              console.log('The private key will be decrypted during import.');
               const result = await networkControl.importWireGuardConfig(filePath);
               
               if (result.success) {
@@ -473,8 +448,9 @@ async function interactiveMode() {
             
             case '5': {
               try {
-                const customFileName = await question('Enter custom filename (leave empty for default): ');
                 console.log('\nExporting network configurations...');
+                console.log('Sensitive data like passwords will be encrypted for security.');
+                const customFileName = await question('Enter custom filename (leave empty for default): ');
                 const filePath = await networkControl.exportNetworkConfigs(customFileName || undefined);
                 
                 if (filePath) {
@@ -491,7 +467,8 @@ async function interactiveMode() {
             case '6': {
               try {
                 const filePath = await question('Enter the path to the exported configuration file: ');
-                console.log(`Importing network configurations from: ${filePath}`);
+                console.log(`\nImporting network configurations from: ${filePath}`);
+                console.log('Encrypted passwords will be decrypted during import.');
                 const result = await networkControl.importNetworkConfigs(filePath);
                 
                 if (result.success) {
@@ -730,7 +707,7 @@ program
   .argument('<ssid>', 'Network SSID')
   .option('-p, --password <password>', 'Network password')
   .option('--hidden', 'Hidden network')
-  .option('-s, --save <name>', 'Save this connection with given name')
+  .option('-s, --save <n>', 'Save this connection with given name')
   .action(async (ssid, options) => {
     console.log(`Connecting to "${ssid}"...`);
     const result = await networkControl.connect(ssid, options.password);
@@ -756,145 +733,108 @@ program
   .description('Show current status')
   .option('-d, --detailed', 'Show detailed status information')
   .action(async (options) => {
-    console.log('Fetching network status...');
+    console.log(colorize('Fetching network status...', 'cyan'));
     const status = await networkControl.getStatus();
     const vpnStatus = await networkControl.getWireGuardStatus();
     
-    console.log('\n=== WiFi Status ===');
-    if (!status.connected) {
-      console.log('Status: Disconnected');
-      console.log('Mode:', status.mode);
-    } else {
-      console.log('Status: Connected');
-      console.log('SSID:', status.ssid);
-      console.log('Mode:', status.mode);
-      
-      if (status.signal) {
-        const signalBars = generateSignalBars(status.signal);
-        console.log(`Signal Strength: ${signalBars} (${status.signal}%)`);
-      }
-      
-      if (status.freq) console.log('Frequency:', status.freq);
-      if (status.bitrate) console.log('Bitrate:', status.bitrate);
-      if (status.security?.length) console.log('Security:', status.security.join(', '));
-      if (status.ipAddress) console.log('IP Address:', status.ipAddress);
-      if (status.gateway) console.log('Gateway:', status.gateway);
-
-      if (options.detailed) {
-        // Get additional system information
-        try {
-          const { stdout: wifiInfo } = await executeCommand('iwconfig wlan0');
-          console.log('\nWiFi Interface Details:');
-          console.log(wifiInfo);
-          
-          const { stdout: linkInfo } = await executeCommand('ip link show wlan0');
-          console.log('\nLink Information:');
-          console.log(linkInfo);
-          
-          const { stdout: routeInfo } = await executeCommand('ip route show');
-          console.log('\nRouting Information:');
-          console.log(routeInfo);
-        } catch (err) {
-          // Just skip additional info if command fails
-        }
-      }
-
-      if (status.ssid) {
-        if (status.mode === 'ap') {
-          console.log('\nHotspot Share QR Code:');
-          console.log('Scan this code with a mobile device to connect to your hotspot:');
-          try {
-            // Try to get the hotspot password using our dedicated method
-            console.log('Retrieving hotspot credentials...');
-            let password;
-            try {
-              password = await networkControl.getHotspotPassword(status.ssid);
-            } catch (passwordErr) {
-              console.log('Failed to retrieve password with primary method, trying alternative...');
-              try {
-                // Fallback to direct connection file lookup
-                const { stdout: connInfo } = await executeCommand(`sudo grep -r "psk=" /etc/NetworkManager/system-connections/ | grep -i "${status.ssid}"`);
-                const passwordMatch = connInfo.match(/psk=([^\s]+)/);
-                if (passwordMatch && passwordMatch[1]) {
-                  password = passwordMatch[1];
-                }
-              } catch (fallbackErr) {
-                // Both methods failed
-              }
-            }
-            
-            if (password) {
-              console.log('Connection credentials found - generating QR code...');
-              await generateNetworkQR(status.ssid, password);
-              
-              // Show connected devices count if in hotspot mode
-              const devices = await networkControl.getConnectedDevices();
-              if (devices.length > 0) {
-                console.log(`\nDevices connected to hotspot: ${devices.length}`);
-                console.log('Use "wifi-manager devices list" for details');
-              } else {
-                console.log('\nNo devices currently connected to hotspot');
-              }
-            } else {
-              console.log('Could not retrieve password - QR code will only contain SSID');
-              await generateNetworkQR(status.ssid);
-            }
-          } catch (err) {
-            console.log('Error generating QR code - showing SSID only');
-            await generateNetworkQR(status.ssid);
-          }
-        } else {
-          // In client mode - show current connection QR code
-          console.log('\nWiFi Connection QR Code:');
-          console.log('Scan this code to connect to the same network:');
-          try {
-            // Try multiple methods to get the password for the current client connection
-            let password;
-            try {
-              // Method 1: Try using nmcli with -s (secret) flag
-              const { stdout: nmcliInfo } = await executeCommand(`nmcli -s -g 802-11-wireless-security.psk connection show "${status.ssid}"`);
-              if (nmcliInfo && nmcliInfo.trim()) {
-                password = nmcliInfo.trim();
-              }
-            } catch (e) {
-              // If first method fails, try the second method
-              try {
-                // Method 2: Try reading from connection file directly
-                const { stdout: connInfo } = await executeCommand(`sudo cat /etc/NetworkManager/system-connections/"${status.ssid}".nmconnection | grep psk=`);
-                const passwordMatch = connInfo.match(/psk=(.+)/);
-                if (passwordMatch && passwordMatch[1]) {
-                  password = passwordMatch[1];
-                }
-              } catch (innerErr) {
-                // Both methods failed, continue without password
-              }
-            }
-            
-            // Generate QR code with or without password
-            if (password) {
-              console.log("Network password found - QR code includes credentials");
-              await generateNetworkQR(status.ssid, password);
-            } else {
-              console.log("Network password not available - QR code includes SSID only");
-              await generateNetworkQR(status.ssid);
-            }
-          } catch (err) {
-            console.log("Failed to generate QR code with credentials - showing SSID only");
-            await generateNetworkQR(status.ssid);
-          }
-        }
-      }
+    // Get saved configurations to show most recent
+    let savedConfigs: { id: string; config: any }[] = [];
+    try {
+      savedConfigs = await networkControl.listConfigs();
+    } catch (error) {
+      // Ignore errors when loading configs
     }
+    
+    // Try to find matching saved configuration
+    const matchingConfig = status.ssid ? 
+      savedConfigs.find(c => c.config.ssid === status.ssid && c.config.mode === (status.mode === 'ap' ? 'hotspot' : 'client')) : 
+      undefined;
+    
+    // Use the formatted status display
+    await displayFormattedStatus(status, vpnStatus, matchingConfig, options.detailed);
 
-    console.log('\n=== VPN Status ===');
-    if (!vpnStatus.active) {
-      console.log('Status: Disconnected');
-    } else {
-      console.log('Status: Connected');
-      if (vpnStatus.endpoint) console.log('Endpoint:', vpnStatus.endpoint);
-      if (vpnStatus.transferRx) console.log('Data Received:', vpnStatus.transferRx);
-      if (vpnStatus.transferTx) console.log('Data Sent:', vpnStatus.transferTx);
-      if (vpnStatus.lastHandshake) console.log('Last Handshake:', vpnStatus.lastHandshake);
+    // Show QR code based on connection mode if we have an active connection
+    if (status.connected && status.ssid) {
+      if (status.mode === 'ap') {
+        console.log('\nHotspot Share QR Code:');
+        console.log('Scan this code with a mobile device to connect to your hotspot:');
+        try {
+          // Try to get the hotspot password
+          let password;
+          try {
+            password = await networkControl.getHotspotPassword(status.ssid);
+          } catch (passwordErr) {
+            try {
+              // Fallback to direct connection file lookup
+              const { stdout: connInfo } = await executeCommand(`sudo grep -r "psk=" /etc/NetworkManager/system-connections/ | grep -i "${status.ssid}"`);
+              const passwordMatch = connInfo.match(/psk=([^\s]+)/);
+              if (passwordMatch && passwordMatch[1]) {
+                password = passwordMatch[1];
+              }
+            } catch (fallbackErr) {
+              // Both methods failed
+            }
+          }
+          
+          if (password) {
+            await generateNetworkQR(status.ssid, password);
+            
+            // Show connected devices count if in hotspot mode
+            const devices = await networkControl.getConnectedDevices();
+            if (devices.length > 0) {
+              console.log(`\nDevices connected to hotspot: ${devices.length}`);
+              console.log('Use "wifi-manager devices list" for details');
+            } else {
+              console.log('\nNo devices currently connected to hotspot');
+            }
+          } else {
+            console.log('Could not retrieve password - QR code will only contain SSID');
+            await generateNetworkQR(status.ssid);
+          }
+        } catch (err) {
+          console.log('Error generating QR code - showing SSID only');
+          await generateNetworkQR(status.ssid);
+        }
+      } else {
+        // In client mode - show current connection QR code
+        console.log('\nWiFi Connection QR Code:');
+        console.log('Scan this code to connect to the same network:');
+        try {
+          // Try multiple methods to get the password for the current client connection
+          let password;
+          try {
+            // Method 1: Try using nmcli with -s (secret) flag
+            const { stdout: nmcliInfo } = await executeCommand(`nmcli -s -g 802-11-wireless-security.psk connection show "${status.ssid}"`);
+            if (nmcliInfo && nmcliInfo.trim()) {
+              password = nmcliInfo.trim();
+            }
+          } catch (e) {
+            // If first method fails, try the second method
+            try {
+              // Method 2: Try reading from connection file directly
+              const { stdout: connInfo } = await executeCommand(`sudo cat /etc/NetworkManager/system-connections/"${status.ssid}".nmconnection | grep psk=`);
+              const passwordMatch = connInfo.match(/psk=(.+)/);
+              if (passwordMatch && passwordMatch[1]) {
+                password = passwordMatch[1];
+              }
+            } catch (innerErr) {
+              // Both methods failed, continue without password
+            }
+          }
+          
+          // Generate QR code with or without password
+          if (password) {
+            console.log("Network password found - QR code includes credentials");
+            await generateNetworkQR(status.ssid, password);
+          } else {
+            console.log("Network password not available - QR code includes SSID only");
+            await generateNetworkQR(status.ssid);
+          }
+        } catch (err) {
+          console.log("Failed to generate QR code with credentials - showing SSID only");
+          await generateNetworkQR(status.ssid);
+        }
+      }
     }
   });
 
@@ -906,7 +846,7 @@ const configCommand = program
 configCommand
   .command('save')
   .description('Save current network configuration')
-  .argument('<name>', 'Configuration name')
+  .argument('<n>', 'Configuration name')
   .action(async (name) => {
     try {
       await networkControl.saveCurrentSetup(name);
@@ -948,7 +888,7 @@ configCommand
 configCommand
   .command('activate')
   .description('Activate saved configuration')
-  .argument('<name>', 'Configuration name')
+  .argument('<n>', 'Configuration name')
   .action(async (name) => {
     try {
       const result = await networkControl.activateConfig(name);
@@ -977,6 +917,7 @@ configCommand
   .action(async (options) => {
     try {
       console.log('Exporting network configurations...');
+      console.log('Sensitive data like passwords will be encrypted for security.');
       const filePath = await networkControl.exportNetworkConfigs(options.filename);
       
       if (filePath) {
@@ -996,6 +937,7 @@ configCommand
   .action(async (filePath) => {
     try {
       console.log(`Importing network configurations from: ${filePath}`);
+      console.log('Encrypted passwords will be decrypted during import.');
       const result = await networkControl.importNetworkConfigs(filePath);
       
       if (result.success) {
@@ -1091,7 +1033,7 @@ program
   .description('Start a WiFi hotspot')
   .argument('<ssid>', 'Hotspot SSID')
   .argument('<password>', 'Hotspot password')
-  .option('-s, --save <name>', 'Save this hotspot configuration')
+  .option('-s, --save <n>', 'Save this hotspot configuration')
   .action(async (ssid, password, options) => {
     console.log(`Starting hotspot with SSID "${ssid}"...`);
     const result = await networkControl.startHotspot(ssid, password);
@@ -1194,28 +1136,23 @@ vpnCommand
     console.log('Checking VPN status...');
     const status = await networkControl.getWireGuardStatus();
     
-    if (!status.active) {
-      console.log('VPN Status: Disconnected');
-    } else {
-      console.log('VPN Status: Connected');
-      if (status.endpoint) console.log('Endpoint:', status.endpoint);
-      if (status.transferRx) console.log('Data Received:', status.transferRx);
-      if (status.transferTx) console.log('Data Sent:', status.transferTx);
-      if (status.lastHandshake) console.log('Last Handshake:', status.lastHandshake);
-      
-      if (options.detailed) {
-        // Show routing information for VPN
-        try {
-          const { stdout: routeInfo } = await executeCommand('ip route show | grep wg0');
-          console.log('\nVPN Routing:');
-          console.log(routeInfo);
-          
-          const { stdout: wgShow } = await executeCommand('sudo wg show wg0');
-          console.log('\nWireGuard Details:');
-          console.log(wgShow);
-        } catch (err) {
-          // Just skip if command fails
-        }
+    // Use the formatVpnStatus from our utilities for better display
+    console.log(formatSectionHeader('VPN STATUS'));
+    const vpnStatusLines = formatVpnStatus(status);
+    vpnStatusLines.forEach(line => console.log(line));
+    
+    if (status.active && options.detailed) {
+      // Show routing information for VPN
+      try {
+        const { stdout: routeInfo } = await executeCommand('ip route show | grep wg0');
+        console.log('\n' + colorize('VPN Routing:', 'bold'));
+        console.log(routeInfo);
+        
+        const { stdout: wgShow } = await executeCommand('sudo wg show wg0');
+        console.log('\n' + colorize('WireGuard Details:', 'bold'));
+        console.log(wgShow);
+      } catch (err) {
+        // Just skip if command fails
       }
     }
   });
@@ -1227,6 +1164,7 @@ vpnCommand
   .action(async (options) => {
     try {
       console.log('Exporting WireGuard configuration...');
+      console.log('The private key will be encrypted for security.');
       const filePath = await networkControl.exportWireGuardConfig(options.filename);
       
       if (filePath) {
@@ -1246,6 +1184,7 @@ vpnCommand
   .action(async (filePath) => {
     try {
       console.log(`Importing WireGuard configuration from: ${filePath}`);
+      console.log('The encrypted private key will be decrypted during import.');
       const result = await networkControl.importWireGuardConfig(filePath);
       
       if (result.success) {

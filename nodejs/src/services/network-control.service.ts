@@ -451,13 +451,8 @@ export class NetworkControl {
   /**
    * Exports network configurations to a file
    */
-  async exportNetworkConfigs(fileName?: string): Promise<string | null> {
-    try {
-      return await this.exportImportManager.exportNetworkConfigs(fileName);
-    } catch (error) {
-      console.error('Failed to export network configurations:', error);
-      return null;
-    }
+  async exportNetworkConfigs(fileName?: string): Promise<string> {
+    return this.exportImportManager.exportNetworkConfigs(fileName);
   }
 
   /**
@@ -468,14 +463,14 @@ export class NetworkControl {
     imported: number;
     errors?: string[];
   }> {
-    return await this.exportImportManager.importNetworkConfigs(filePath);
+    return this.exportImportManager.importNetworkConfigs(filePath);
   }
 
   /**
    * Exports WireGuard configuration to a file
    */
   async exportWireGuardConfig(fileName?: string): Promise<string | null> {
-    return await this.exportImportManager.exportWireGuardConfig(fileName);
+    return this.exportImportManager.exportWireGuardConfig(fileName);
   }
 
   /**
@@ -485,6 +480,6 @@ export class NetworkControl {
     success: boolean;
     errors?: string[];
   }> {
-    return await this.exportImportManager.importWireGuardConfig(filePath);
+    return this.exportImportManager.importWireGuardConfig(filePath);
   }
 }

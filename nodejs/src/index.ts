@@ -16,8 +16,8 @@ function question(query: string): Promise<string> {
 
 async function displayMenu(): Promise<void> {
   console.log('\n=== WiFi Management Tool ===');
-  console.log('1. Scan for networks');
-  console.log('2. Connect to network');
+  console.log('1. Scan for wifi networks');
+  console.log('2. Connect to wifi network');
   console.log('3. Disconnect');
   console.log('4. Start hotspot');
   console.log('5. Stop hotspot');

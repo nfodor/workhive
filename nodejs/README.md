@@ -100,6 +100,66 @@ wifi-manager vpn start -c config.json
 wifi-manager vpn stop
 wifi-manager vpn export -f myvpn.json
 wifi-manager vpn import myvpn.json
+
+# Network diagnostics
+wifi-manager debug
+wifi-manager debug --deep
+
+# View connected devices (when in hotspot mode)
+wifi-manager devices list
+wifi-manager devices details 192.168.4.10  # IP address of connected device
+
+# Network configurations import/export
+wifi-manager config export -f backup.json
+wifi-manager config import backup.json
+```
+
+## Security Features
+
+- 🔐 **Password Encryption**: All exported passwords and private keys are encrypted
+- 🛡️ **Access Control**: Manage which devices can connect to your hotspot
+- 🔍 **Connection Monitoring**: Monitor connected devices and their activity
+- 📊 **Diagnostics**: Comprehensive network diagnostics tools
+
+## Advanced Features
+
+### Export/Import Configurations
+
+You can export your network and VPN configurations to a file for backup or transfer to another device:
+
+```bash
+# Export configurations
+wifi-manager config export -f my_networks.json
+wifi-manager vpn export -f my_vpn.json
+
+# Import configurations
+wifi-manager config import my_networks.json
+wifi-manager vpn import my_vpn.json
+```
+
+### QR Code Sharing
+
+Easily share network credentials using QR codes:
+
+```bash
+# Show QR code for current network
+wifi-manager status
+
+# Show QR code when starting a hotspot
+wifi-manager hotspot "MyHotspot" "MyPassword"
+
+# Show WireGuard VPN QR code
+wifi-manager vpn status
+```
+
+## License
+
+ISC License
+
+## Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request for any improvements or bug fixes.
+wifi-manager vpn import myvpn.json
 ```
 
 ## Network Configuration Management
