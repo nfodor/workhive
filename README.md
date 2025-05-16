@@ -1,18 +1,33 @@
-# WorkHive - Free Professional Travel Router for Raspberry Pi
+# WorkHive - for Raspberry Pi
 
-A comprehensive solution for transforming your Raspberry Pi 4B and newer into a powerful, portable travel router. When connected to an iPhone or Android phone, this turns your Raspberry Pi into an advanced networking hub with powerful capabilities. This tool provides a TypeScript/JavaScript implementation designed for travelers, remote workers, and tech enthusiasts who need a reliable, secure networking solution on the go.
 
-> **⚠️ WARNING: Some features are still under development.** This project is actively being developed and some features mentioned in this documentation might not be fully implemented. Please refer to the test results and development updates for more information on feature status.
+Workhive
 
-## The Traveler's Network Dilemma
+Your portable, public-facing SaaS server—powered by a Raspberry Pi and your phone’s 5G.
 
-Do you travel frequently and wish your devices could connect to WiFi as seamlessly on the road as they do at your home office? We understand the frustration. When traveling with multiple devices, you lose the simplicity of your home network setup, forcing you to reconnect each device to unfamiliar networks, often with questionable security.
+Workhive transforms any Raspberry Pi 4B (or newer) into a secure mobile hotspot and self-hosted app server. Tethered to an iPhone or Android phone, your Pi becomes a decentralized infrastructure node—ideal for startups, field teams, or privacy-focused developers.
 
-WorkHive solves this by bringing the comfort and security of your home office network wherever you go. This isn't just a travel router—it's your entire home network ecosystem made portable. Connect once to WorkHive, and all your devices instantly recognize their familiar environment, maintaining your configurations, shared resources, and security settings intact.
+Thanks to built-in Setip.io integration, your Pi receives a globally routable public IP address—no NAT, no VPN, no static IP needed. Apps running on your Pi can be accessed instantly via a public domain (e.g. myapp.setip.io), with encrypted routing and full zero-trust security.
 
-Even better, WorkHive enhances your home network when you're not traveling, serving as a security upgrade to your existing setup that you can simply unplug and take when you're on the move.
+Deploy a fully decentralized SaaS stack—at a fraction of the cost of traditional cloud hosting.
 
-## Project Goal
+Use Cases
+	•	Launch a production-ready app in minutes—without cloud bills
+	•	Set up a shared team environment that works securely across any network
+	•	Host private dashboards, developer tools, or collaboration platforms
+	•	Travel with a fully functional stack that runs on 5G, with no setup required
+
+Core Features
+	•	Public IP exposure with zero config (via Setip.io)
+	•	Wi-Fi access point with captive portal and DNS exception handling
+	•	Zero-trust team connectivity: peers connect securely, even over hostile networks
+	•	Full SaaS app hosting directly on the Pi
+	•	End-to-end encrypted tunneling with WireGuard
+	•	Works anywhere, tethered to any phone with a data plan
+
+Example: You’re in a remote location. Your Pi is tethered to your phone. A teammate in another country connects securely to your app via its public Setip.io subdomain. Everyone stays encrypted, authenticated, and cloud-free.
+
+⸻
 
 The primary goal of this project is to create a portable, low-power travel router using a Raspberry Pi that offers:
 
