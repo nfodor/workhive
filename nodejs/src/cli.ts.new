@@ -1,0 +1,282 @@
+#!/usr/bin/env node
+import { NetworkControl } from './services/network-control.service';
+import { generateSignalBars, generateNetworkQR, generateWireGuardQR } from './utils/display.util';
+import { program } from 'commander';
+import { executeCommand } from './utils/command.util';
+
+const networkControl = new NetworkControl();
+
+program
+  .name('wifi-manager')
+  .description('WiFi Management CLI')
+  .version('1.0.0');
+
+program
+  .command('scan')
+  .description('Scan for available networks')
+  .action(async () => {
+    const networks = await networkControl.scanNetworks();
+    console.log('\nAvailable Networks:');
+    networks.forEach(net => {
+      const signalBars = generateSignalBars(net.signal);
+      console.log(`${signalBars} ${net.ssid} (${net.security.join(', ')})`);
+    });
+  });
+
+program
+  .command('connect')
+  .description('Connect to a network')
+  .argument('<ssid>', 'Network SSID')
+  .option('-p, --password <password>', 'Network password')
+  .option('--hidden', 'Hidden network')
+  .action(async (ssid, options) => {
+    const result = await networkControl.connect(ssid, options.password);
+    console.log(result ? 'Connected successfully' : 'Connection failed');
+  });
+
+program
+  .command('disconnect')
+  .description('Disconnect from current network')
+  .action(async () => {
+    const result = await networkControl.disconnect();
+    console.log(result ? 'Disconnected successfully' : 'Disconnection failed');
+  });
+
+program
+  .command('status')
+  .description('Show current status')
+  .action(async () => {
+    const status = await networkControl.getStatus();
+    const vpnStatus = await networkControl.getWireGuardStatus();
+    
+    console.log('\n=== WiFi Status ===');
+    if (!status.connected) {
+      console.log('Status: Disconnected');
+      console.log('Mode:', status.mode);
+    } else {
+      console.log('Status: Connected');
+      console.log('SSID:', status.ssid);
+      console.log('Mode:', status.mode);
+      
+      if (status.signal) {
+        const signalBars = generateSignalBars(status.signal);
+        console.log(`Signal Strength: ${signalBars} (${status.signal}%)`);
+      }
+      
+      if (status.freq) console.log('Frequency:', status.freq);
+      if (status.bitrate) console.log('Bitrate:', status.bitrate);
+      if (status.security?.length) console.log('Security:', status.security.join(', '));
+      if (status.ipAddress) console.log('IP Address:', status.ipAddress);
+      if (status.gateway) console.log('Gateway:', status.gateway);
+
+      if (status.ssid) {
+        console.log('\nNetwork Share QR Code:');
+        await generateNetworkQR(status.ssid);
+      }
+    }
+
+    if (vpnStatus.active) {
+      console.log('\n=== VPN Status ===');
+      console.log('Status: Connected');
+      if (vpnStatus.endpoint) console.log('Endpoint:', vpnStatus.endpoint);
+      if (vpnStatus.transferRx) console.log('Data Received:', vpnStatus.transferRx);
+      if (vpnStatus.transferTx) console.log('Data Sent:', vpnStatus.transferTx);
+      if (vpnStatus.lastHandshake) console.log('Last Handshake:', vpnStatus.lastHandshake);
+    }
+  });
+
+// Create a single config command with subcommands
+const configCommand = program
+  .command('config')
+  .description('Manage network configurations');
+
+configCommand
+  .command('save')
+  .description('Save current network configuration')
+  .argument('<name>', 'Configuration name')
+  .action(async (name) => {
+    try {
+      await networkControl.saveCurrentSetup(name);
+      console.log('Configuration saved successfully');
+    } catch (error) {
+      console.error('Failed to save configuration:', error);
+    }
+  });
+
+configCommand
+  .command('list')
+  .description('List saved configurations')
+  .action(async () => {
+    try {
+      const configs = await networkControl.listConfigs();
+      console.log('\nSaved Configurations:');
+      configs.forEach(({ id, config }) => {
+        console.log(`- ${id} (${config.mode}): ${config.ssid}`);
+      });
+    } catch (error) {
+      console.error('Failed to list configurations:', error);
+    }
+  });
+
+configCommand
+  .command('activate')
+  .description('Activate saved configuration')
+  .argument('<name>', 'Configuration name')
+  .action(async (name) => {
+    try {
+      const result = await networkControl.activateConfig(name);
+      console.log(result ? 'Configuration activated successfully' : 'Failed to activate configuration');
+    } catch (error) {
+      console.error('Failed to activate configuration:', error);
+    }
+  });
+
+configCommand
+  .command('deduplicate')
+  .description('Remove duplicate configurations')
+  .action(async () => {
+    try {
+      await networkControl.deduplicateConfigs();
+      console.log('Configurations deduplicated successfully');
+    } catch (error) {
+      console.error('Failed to deduplicate configurations:', error);
+    }
+  });
+
+program
+  .command('device')
+  .description('Manage device authorization')
+  .option('-a, --allow <mac>', 'Allow MAC address')
+  .option('-r, --remove <mac>', 'Remove MAC address')
+  .action(async (options) => {
+    try {
+      const { stdout } = await executeCommand('cat /etc/NetworkManager/dnsmasq.d/dhcp-options.conf');
+      const currentMacs = stdout.split('\n')
+        .filter(line => line.startsWith('dhcp-host='))
+        .map(line => line.split('=')[1]);
+
+      let macs = [...currentMacs];
+      
+      if (options.allow) {
+        macs.push(options.allow);
+      }
+      if (options.remove) {
+        macs = macs.filter(mac => mac !== options.remove);
+      }
+
+      await networkControl.updateDeviceAuth(macs);
+      console.log('Device authorization updated successfully');
+    } catch (error) {
+      console.error('Failed to update device authorization:', error);
+    }
+  });
+
+program
+  .command('dns')
+  .description('Configure DNS servers')
+  .argument('<servers>', 'Comma-separated list of DNS servers')
+  .action(async (servers) => {
+    try {
+      await networkControl.updateDnsConfig(servers.split(','));
+      console.log('DNS configuration updated successfully');
+    } catch (error) {
+      console.error('Failed to update DNS configuration:', error);
+    }
+  });
+
+program
+  .command('debug')
+  .description('Run network diagnostics')
+  .option('-d, --deep', 'Run deep diagnostics')
+  .action(async (options) => {
+    try {
+      const diagnostics = await networkControl.runDiagnostics(options.deep);
+      console.log('\n=== Network Diagnostics ===');
+      console.log('\nNetwork Status:');
+      console.log(diagnostics.networkStatus);
+      console.log('\nDNS Configuration:');
+      console.log(diagnostics.dnsStatus);
+      console.log('\nDHCP Status:');
+      console.log(diagnostics.dhcpStatus);
+      
+      if (options.deep && diagnostics.systemLogs) {
+        console.log('\nSystem Logs:');
+        console.log(diagnostics.systemLogs.join('\n'));
+      }
+      
+      if (diagnostics.vpnStatus.active) {
+        console.log('\nVPN Status:');
+        console.log('Endpoint:', diagnostics.vpnStatus.endpoint);
+        console.log('Data Received:', diagnostics.vpnStatus.transferRx);
+        console.log('Data Sent:', diagnostics.vpnStatus.transferTx);
+        console.log('Last Handshake:', diagnostics.vpnStatus.lastHandshake);
+      }
+    } catch (error) {
+      console.error('Failed to run diagnostics:', error);
+    }
+  });
+
+program
+  .command('hotspot')
+  .description('Start a WiFi hotspot')
+  .argument('<ssid>', 'Hotspot SSID')
+  .argument('<password>', 'Hotspot password')
+  .action(async (ssid, password) => {
+    const result = await networkControl.startHotspot(ssid, password);
+    console.log(result ? 'Hotspot started successfully' : 'Failed to start hotspot');
+  });
+
+program
+  .command('vpn')
+  .description('Manage WireGuard VPN connection')
+  .argument('<action>', 'start | stop | status')
+  .option('-c, --config <file>', 'WireGuard config file path')
+  .action(async (action, options) => {
+    switch (action) {
+      case 'start': {
+        if (!options.config) {
+          console.error('Error: Config file is required for VPN start');
+          return;
+        }
+        try {
+          const { stdout } = await executeCommand(`cat ${options.config}`);
+          const config = JSON.parse(stdout);
+          const result = await networkControl.setupWireGuardWithQR(config);
+          
+          if (result.success && result.config) {
+            console.log('VPN started successfully');
+            console.log('\nVPN Configuration QR Code:');
+            await generateWireGuardQR(result.config);
+          } else {
+            console.log('Failed to start VPN');
+          }
+        } catch (error) {
+          console.error('Failed to start VPN:', error);
+        }
+        break;
+      }
+      case 'stop': {
+        const result = await networkControl.stopWireGuard();
+        console.log(result ? 'VPN stopped successfully' : 'Failed to stop VPN');
+        break;
+      }
+      case 'status': {
+        const status = await networkControl.getWireGuardStatus();
+        if (!status.active) {
+          console.log('VPN Status: Disconnected');
+        } else {
+          console.log('VPN Status: Connected');
+          if (status.endpoint) console.log('Endpoint:', status.endpoint);
+          if (status.transferRx) console.log('Data Received:', status.transferRx);
+          if (status.transferTx) console.log('Data Sent:', status.transferTx);
+          if (status.lastHandshake) console.log('Last Handshake:', status.lastHandshake);
+        }
+        break;
+      }
+      default: {
+        console.error('Invalid action. Use start, stop, or status');
+      }
+    }
+  });
+
+program.parse();
