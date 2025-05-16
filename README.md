@@ -1,30 +1,246 @@
-# 🌟 WORK-HIVE Network Manager
+# WiFi Manager
 
-A powerful command-line tool for easily managing network connections on Linux systems, with special focus on WiFi hotspot and client modes with WireGuard VPN support.
+A comprehensive network management solution for Raspberry Pi and other Linux systems. This tool provides a TypeScript/JavaScript implementation of various network management features with both CLI and interactive modes.
 
-![WORK-HIVE Network Status](status_screenshot.png)
+## Features
 
-## 🚀 Features
+- 📱 **QR Code Generation**: Share network credentials easily via QR codes
+- 📊 **Signal Strength Visualization**: Visual signal strength indicators
+- 🔒 **WireGuard VPN Support**: Full VPN management built-in
+- 💾 **Configuration Management**: Save and restore network profiles
+- 🔐 **Device Authorization**: Control which devices can connect
+- 🚀 **Systemd Service**: Automatic startup on boot
+- 🖥️ **Interactive CLI**: Feature-rich command-line interface
 
-- **Dual-mode Operation**: Switch between hotspot and client mode with a single command
-- **WireGuard VPN Integration**: Seamlessly connect and route traffic through WireGuard
-- **Interactive Setup**: User-friendly wizard for easy configuration
-- **Configuration Management**: Save, select, and reuse network configurations
-- **Detailed Network Status**: Comprehensive view of your network state
-- **Device Whitelisting**: Control which devices can access your hotspot
-- **Captive Portal Support**: Force DNS queries through your system
-- **Diagnostics Tools**: Debug network issues with detailed information
+## Installation
 
-## 📋 Requirements
+### Automatic Installation
 
-- NetworkManager
-- WireGuard tools (for VPN functionality)
-- Linux system with Bash
-- Standard networking utilities (nmcli, ip, ping, etc.)
+```bash
+sudo ./install.sh
+```
 
-## 🛠️ Installation
+### Manual Installation
 
-1. Clone this repository:
+1. Install dependencies:
    ```bash
-   git clone https://github.com/nfodor/work-hive.git
-   cd work-hive
+   npm install
+   ```
+
+2. Build the application:
+   ```bash
+   npm run build
+   ```
+
+3. Create a global symlink (optional):
+   ```bash
+   sudo npm link
+   ```
+
+4. Set up systemd service (optional):
+   ```bash
+   sudo cp wifi-manager.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable wifi-manager.service
+   sudo systemctl start wifi-manager.service
+   ```
+
+## Usage
+
+### Interactive Mode
+
+Simply run the command without arguments:
+
+```bash
+wifi-manager
+```
+
+This will start an interactive menu where you can:
+- Scan for networks
+- Connect to networks
+- Manage network configurations
+- Set up and control VPN connections
+- View system status
+- And more...
+
+### Command-Line Interface
+
+```bash
+# Get help
+wifi-manager --help
+
+# Scan for networks
+wifi-manager scan
+
+# Scan with interactive selection
+wifi-manager scan -i
+
+# Connect to a network
+wifi-manager connect "MyNetwork" -p "MyPassword"
+
+# Show current status
+wifi-manager status
+
+# Show detailed status
+wifi-manager status --detailed
+
+# Start a hotspot
+wifi-manager hotspot "MyHotspot" "MyPassword"
+
+# Manage configurations
+wifi-manager config list
+wifi-manager config save myconfig
+wifi-manager config activate myconfig
+wifi-manager config export -f myexport.json
+wifi-manager config import myexport.json
+
+# WireGuard VPN management
+wifi-manager vpn status
+wifi-manager vpn start -c config.json
+wifi-manager vpn stop
+wifi-manager vpn export -f myvpn.json
+wifi-manager vpn import myvpn.json
+
+# Network diagnostics
+wifi-manager debug
+wifi-manager debug --deep
+
+# View connected devices (when in hotspot mode)
+wifi-manager devices list
+wifi-manager devices details 192.168.4.10  # IP address of connected device
+
+# Network configurations import/export
+wifi-manager config export -f backup.json
+wifi-manager config import backup.json
+```
+
+## Security Features
+
+- 🔐 **Password Encryption**: All exported passwords and private keys are encrypted
+- 🛡️ **Access Control**: Manage which devices can connect to your hotspot
+- 🔍 **Connection Monitoring**: Monitor connected devices and their activity
+- 📊 **Diagnostics**: Comprehensive network diagnostics tools
+
+## Advanced Features
+
+### Export/Import Configurations
+
+You can export your network and VPN configurations to a file for backup or transfer to another device:
+
+```bash
+# Export configurations
+wifi-manager config export -f my_networks.json
+wifi-manager vpn export -f my_vpn.json
+
+# Import configurations
+wifi-manager config import my_networks.json
+wifi-manager vpn import my_vpn.json
+```
+
+### QR Code Sharing
+
+Easily share network credentials using QR codes:
+
+```bash
+# Show QR code for current network
+wifi-manager status
+
+# Show QR code when starting a hotspot
+wifi-manager hotspot "MyHotspot" "MyPassword"
+
+# Show WireGuard VPN QR code
+wifi-manager vpn status
+```
+
+## License
+
+ISC License
+
+## Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request for any improvements or bug fixes.
+wifi-manager vpn import myvpn.json
+```
+
+## Network Configuration Management
+
+Save, export, and import network configurations:
+
+```bash
+# Save current configuration
+wifi-manager config save home
+
+# List saved configurations
+wifi-manager config list
+
+# Activate a saved configuration
+wifi-manager config activate work
+
+# Remove duplicate configurations
+wifi-manager config deduplicate
+
+# Export all configurations to a file
+wifi-manager config export -f backup.json
+
+# Import configurations from a file
+wifi-manager config import backup.json
+```
+
+## WireGuard VPN
+
+Set up, export, and import VPN connections:
+
+```bash
+# Start VPN from config file
+wifi-manager vpn start -c vpn-config.json
+
+# Start VPN with direct parameters
+wifi-manager vpn start -e vpn.example.com:51820 -a "10.0.0.0/24,192.168.0.0/24" -d 1.1.1.1
+
+# Check VPN status
+wifi-manager vpn status
+
+# Stop VPN
+wifi-manager vpn stop
+
+# Export current VPN configuration to a file
+wifi-manager vpn export -f myvpn.json
+
+# Import VPN configuration from a file
+wifi-manager vpn import myvpn.json
+```
+
+## Device Management
+
+Control which devices can connect to your network:
+
+```bash
+# List allowed devices
+wifi-manager device --list
+
+# Allow a device
+wifi-manager device --allow "00:11:22:33:44:55"
+
+# Remove a device
+wifi-manager device --remove "00:11:22:33:44:55"
+```
+
+## Diagnostics
+
+Debug network issues:
+
+```bash
+# Basic diagnostics
+wifi-manager debug
+
+# Deep diagnostics with system logs
+wifi-manager debug --deep
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the ISC License.
