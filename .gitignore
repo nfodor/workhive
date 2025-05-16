@@ -1,7 +1,8 @@
 *.log
 *.tmp
 *.bak
-*.swp 
+*.swp
+*.new
 node_modules/
 dist/
 build/
@@ -16,6 +17,10 @@ coverage/
 .idea/
 .vscode/
 .DS_Store
+# Test results
+test-results/
+# Export files
+wifi_exports/
 # Test results
 test-results/
 # Export files
