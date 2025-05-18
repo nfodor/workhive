@@ -656,7 +656,7 @@ async function interactiveMode() {
           const packageJson = require('../package.json');
           console.log('\\n=== About WorkHive ===');
           console.log(`Version: ${packageJson.version}`);
-          console.log('WorkHive - Free Professional Travel Router for Raspberry Pi');
+          console.log('WorkHive - Free Professional Mobile Router for Raspberry Pi');
           console.log('Developed by: Nicolas Fodor nfodor @ mac.com'); // Replace with actual developer info
           console.log('=========================');
           break;
