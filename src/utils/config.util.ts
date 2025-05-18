@@ -1,7 +1,7 @@
 import { executeCommand } from './command.util';
-import path from 'path';
-import fs from 'fs/promises';
-import os from 'os';
+import * as path from 'path';
+import * as fs from 'fs/promises';
+import * as os from 'os';
 
 export interface NetworkConfig {
   ssid: string;
@@ -28,9 +28,12 @@ export class ConfigManager {
   private configDir: string;
   private dnsmasqConfigPath = '/etc/NetworkManager/dnsmasq.d/custom-dns.conf';
   private dhcpConfigPath = '/etc/NetworkManager/dnsmasq.d/dhcp-options.conf';
+  private defaultConfigPath: string;
 
   constructor() {
-    this.configDir = path.join(os.homedir(), '.wifi_configs');
+    const homeDir = os.homedir() || '/home/pi';
+    this.configDir = path.join(homeDir, '.wifi_configs');
+    this.defaultConfigPath = path.join(this.configDir, 'default-config.json');
   }
 
   async init() {
@@ -193,5 +196,23 @@ export class ConfigManager {
       dhcpStatus: dhcpStatus.stdout,
       systemLogs
     };
+  }
+
+  async setDefaultConfig(id: string): Promise<void> {
+    await fs.writeFile(this.defaultConfigPath, JSON.stringify({ id }), 'utf-8');
+  }
+
+  async getDefaultConfig(): Promise<string | null> {
+    try {
+      if (await fs.access(this.defaultConfigPath).then(() => true).catch(() => false)) {
+        const data = await fs.readFile(this.defaultConfigPath, 'utf-8');
+        const { id } = JSON.parse(data);
+        return id;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error reading default config:', error);
+      return null;
+    }
   }
 }

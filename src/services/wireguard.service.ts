@@ -162,4 +162,33 @@ PersistentKeepalive = 25`;
       return false;
     }
   }
+
+  async startVPN(): Promise<boolean> {
+    try {
+      // Check if WireGuard is already running
+      const status = await this.getStatus();
+      if (status.active) {
+        console.log('WireGuard is already running');
+        return true;
+      }
+
+      // Check if the config file exists
+      const { stdout: configExists } = await executeCommand('test -f /etc/wireguard/wg0.conf && echo "exists"', false);
+      if (!configExists.includes('exists')) {
+        console.error('WireGuard configuration file not found');
+        return false;
+      }
+
+      // Start WireGuard
+      await executeCommand('sudo systemctl enable wg-quick@wg0');
+      await executeCommand('sudo systemctl start wg-quick@wg0');
+
+      // Verify it's running
+      const { stdout: serviceStatus } = await executeCommand('systemctl is-active wg-quick@wg0', false);
+      return serviceStatus.trim() === 'active';
+    } catch (error) {
+      console.error('Failed to start WireGuard:', error);
+      return false;
+    }
+  }
 }

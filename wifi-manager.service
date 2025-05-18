@@ -1,17 +1,17 @@
 [Unit]
-Description=WiFi Management Service
+Description=WorkHive WiFi Manager - Travel Router
 After=network.target
+Wants=network.target
 
 [Service]
-ExecStart=/usr/bin/node /home/pi/scripts/setwifi/nodejs/dist/index.js
-# Alternative: Use CLI for specific mode if needed
-# ExecStart=/usr/bin/node /home/pi/scripts/setwifi/nodejs/dist/cli.js status
-WorkingDirectory=/home/pi/scripts/setwifi/nodejs
-StandardOutput=inherit
-StandardError=inherit
+ExecStart=/usr/bin/node /home/pi/scripts/setwifi/dist/boot.js
+WorkingDirectory=/home/pi/scripts/setwifi
+StandardOutput=journal
+StandardError=journal
 Restart=always
 User=root
 Environment=PATH=/usr/bin:/usr/local/bin:/sbin:/usr/sbin
+Environment=NODE_ENV=production
 
 [Install]
 WantedBy=multi-user.target

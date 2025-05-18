@@ -29,7 +29,7 @@ async function interactiveMode() {
   }
 
   async function displayMenu(): Promise<void> {
-    console.log('\n=== WiFi Management Tool ===');
+    console.log('\\n=== WorkHive WiFi Management ===');
     console.log('1. Scan for networks');
     console.log('2. Connect to network');
     console.log('3. Disconnect');
@@ -40,6 +40,8 @@ async function interactiveMode() {
     console.log('8. Network Configuration Management');
     console.log('9. Network diagnostics');
     console.log('10. Connected devices');
+    console.log('11. Boot configuration');
+    console.log('12. About WorkHive'); // New menu item
     console.log('0. Exit');
   }
 
@@ -49,7 +51,7 @@ async function interactiveMode() {
   while (running) {
     try {
       await displayMenu();
-      const choice = await question('\nEnter your choice (0-10): ');
+      const choice = await question('\\nEnter your choice (0-12): '); // Updated choice range
 
       switch (choice) {
         case '1': {
@@ -606,6 +608,57 @@ async function interactiveMode() {
           } catch (error) {
             console.error('Failed to get connected devices:', error);
           }
+          break;
+        }
+        
+        case '11': {
+          console.log('\n=== Boot Configuration ===');
+          try {
+            // Get current default config
+            const defaultConfig = await networkControl.getDefaultConfig();
+            if (defaultConfig) {
+              console.log(`Current boot configuration: ${defaultConfig}`);
+            } else {
+              console.log('No boot configuration set.');
+            }
+            
+            // List available configs
+            const configs = await networkControl.listConfigs();
+            
+            if (configs.length === 0) {
+              console.log('No saved configurations available.');
+              break;
+            }
+            
+            console.log('\nAvailable configurations:');
+            configs.forEach((config, i) => {
+              console.log(`${i + 1}. ${config.id} (${config.config.ssid}, ${config.config.mode})`);
+            });
+            
+            const choice = await question('\nSelect configuration to use at boot (1-' + configs.length + ') or 0 to cancel: ');
+            const configChoice = parseInt(choice);
+            
+            if (configChoice === 0 || isNaN(configChoice) || configChoice > configs.length) {
+              console.log('Operation cancelled.');
+              break;
+            }
+            
+            const selectedConfig = configs[configChoice - 1];
+            await networkControl.setDefaultConfig(selectedConfig.id);
+            console.log(`Configuration "${selectedConfig.id}" will be used at boot time`);
+          } catch (error) {
+            console.error('Failed to set boot configuration:', error);
+          }
+          break;
+        }
+
+        case '12': { // New case for "About WorkHive"
+          const packageJson = require('../package.json');
+          console.log('\\n=== About WorkHive ===');
+          console.log(`Version: ${packageJson.version}`);
+          console.log('WorkHive - Free Professional Travel Router for Raspberry Pi');
+          console.log('Developed by: Nicolas Fodor nfodor @ mac.com'); // Replace with actual developer info
+          console.log('=========================');
           break;
         }
 
@@ -1203,121 +1256,29 @@ vpnCommand
     }
   });
 
-// Create device management command
-const deviceCommand = program
-  .command('devices')
-  .description('Manage connected devices');
-
-deviceCommand
-  .command('list')
-  .description('List connected devices')
-  .option('-i, --interactive', 'Select device interactively for detailed information')
-  .action(async (options) => {
-    console.log('Getting connected devices...');
-    const status = await networkControl.getStatus();
-    
-    if (!status.connected || status.mode !== 'ap') {
-      console.log('Not in hotspot mode. Please start a hotspot first.');
-      return;
-    }
-    
-    const devices = await networkControl.getConnectedDevices();
-    
-    if (devices.length === 0) {
-      console.log('No devices connected to hotspot.');
-      return;
-    }
-    
-    console.log(`\nFound ${devices.length} connected device(s):\n`);
-    devices.forEach((device, i) => {
-      console.log(`${i + 1}. IP: ${device.ip}, MAC: ${device.mac}${device.hostname ? `, Hostname: ${device.hostname}` : ''}${device.lastSeen ? `, Last Seen: ${device.lastSeen}` : ''}`);
-    });
-
-    if (options.interactive) {
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-      });
+program
+  .command('boot-setup')
+  .description('Set the network configuration to use at boot time')
+  .argument('<id>', 'Configuration ID to use at boot')
+  .action(async (id) => {
+    try {
+      // Check if the configuration exists
+      const savedConfigs = await networkControl.listConfigs();
+      const configExists = savedConfigs.some((config: { id: string }) => config.id === id);
       
-      rl.question('\nSelect device for detailed information (1-' + devices.length + ') or 0 to cancel: ', async (answer) => {
-        const choice = parseInt(answer);
-        if (choice === 0 || isNaN(choice) || choice > devices.length) {
-          console.log('Operation cancelled.');
-          rl.close();
-          return;
-        }
-        
-        const device = devices[choice - 1];
-        console.log(`\nGetting detailed information for device ${device.ip}...`);
-        const details = await networkControl.getDeviceDetails(device.ip);
-        
-        console.log('\n=== Device Details ===');
-        console.log(`IP Address: ${details.ip}`);
-        if (details.mac) console.log(`MAC Address: ${details.mac}`);
-        if (details.hostname) console.log(`Hostname: ${details.hostname}`);
-        if (details.vendor) console.log(`Vendor: ${details.vendor}`);
-        if (details.connectionTime) console.log(`Connected for: ${details.connectionTime}`);
-        if (details.signalStrength) console.log(`Signal Strength: ${details.signalStrength}`);
-        
-        if (details.pingResponse) {
-          console.log('\nPing Response:');
-          console.log(details.pingResponse);
-        }
-        
-        if (details.openPorts && details.openPorts.length > 0) {
-          console.log('\nOpen Ports:');
-          details.openPorts.forEach(port => console.log(`- ${port}`));
-        }
-        
-        if (details.networkActivity) {
-          console.log('\nRecent Network Activity:');
-          console.log(details.networkActivity);
-        }
-        
-        if (details.dhcpInfo) {
-          console.log('\nDHCP Lease Information:');
-          console.log(details.dhcpInfo);
-        }
-        
-        rl.close();
-      });
-    }
-  });
-
-deviceCommand
-  .command('details')
-  .description('Get detailed information about a specific device')
-  .argument('<ip>', 'IP address of the device')
-  .action(async (ip) => {
-    console.log(`Getting detailed information for device ${ip}...`);
-    const details = await networkControl.getDeviceDetails(ip);
-    
-    console.log('\n=== Device Details ===');
-    console.log(`IP Address: ${details.ip}`);
-    if (details.mac) console.log(`MAC Address: ${details.mac}`);
-    if (details.hostname) console.log(`Hostname: ${details.hostname}`);
-    if (details.vendor) console.log(`Vendor: ${details.vendor}`);
-    if (details.connectionTime) console.log(`Connected for: ${details.connectionTime}`);
-    if (details.signalStrength) console.log(`Signal Strength: ${details.signalStrength}`);
-    
-    if (details.pingResponse) {
-      console.log('\nPing Response:');
-      console.log(details.pingResponse);
-    }
-    
-    if (details.openPorts && details.openPorts.length > 0) {
-      console.log('\nOpen Ports:');
-      details.openPorts.forEach(port => console.log(`- ${port}`));
-    }
-    
-    if (details.networkActivity) {
-      console.log('\nRecent Network Activity:');
-      console.log(details.networkActivity);
-    }
-    
-    if (details.dhcpInfo) {
-      console.log('\nDHCP Lease Information:');
-      console.log(details.dhcpInfo);
+      if (!configExists) {
+        console.log(`Configuration "${id}" not found. Available configurations:`);
+        savedConfigs.forEach((config: { id: string; config: any }) => {
+          console.log(`- ${config.id} (${config.config.ssid}, ${config.config.mode})`);
+        });
+        return;
+      }
+      
+      // Set as default configuration
+      await networkControl.setDefaultConfig(id);
+      console.log(`Configuration "${id}" will be used at boot time`);
+    } catch (error) {
+      console.error('Failed to set boot configuration:', error);
     }
   });
 

@@ -67,4 +67,12 @@ export class NetworkService {
   async runDiagnostics(deep = false): Promise<any> {
     return this.configManager.runDiagnostics(deep);
   }
+
+  async setDefaultConfig(id: string): Promise<void> {
+    await this.configManager.setDefaultConfig(id);
+  }
+
+  async getDefaultConfig(): Promise<string | null> {
+    return this.configManager.getDefaultConfig();
+  }
 }

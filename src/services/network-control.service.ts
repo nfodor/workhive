@@ -23,6 +23,8 @@ export class NetworkControl {
     this.exportImportManager = new ExportImportManager();
   }
 
+  // Network scanning and connection methods
+
   async scanNetworks(): Promise<NetworkInfo[]> {
     try {
       const { stdout } = await executeCommand('nmcli -f SSID,SIGNAL,FREQ,SECURITY device wifi list');
@@ -174,11 +176,27 @@ export class NetworkControl {
   }
 
   async activateConfig(id: string): Promise<boolean> {
-    const config = await this.networkService.activateConfig(id);
-    if (config.mode === 'hotspot') {
-      return this.startHotspot(config.ssid, config.password!);
-    } else {
-      return this.connect(config.ssid, config.password);
+    try {
+      const config = await this.networkService.activateConfig(id);
+      if (config.mode === 'hotspot') {
+        const result = await this.startHotspot(config.ssid, config.password!);
+        // Update status to indicate we're in hotspot mode
+        console.log(`WorkHive: Activated hotspot with SSID: ${config.ssid}`);
+        return result;
+      } else {
+        const result = await this.connect(config.ssid, config.password);
+        // Start VPN if configured
+        if (result && config.vpnEnabled) {
+          console.log(`WorkHive: Connected to ${config.ssid}, starting VPN...`);
+          await this.wireguard.startVPN();
+        } else {
+          console.log(`WorkHive: Connected to ${config.ssid}`);
+        }
+        return result;
+      }
+    } catch (error) {
+      console.error(`Failed to activate config ${id}:`, error);
+      return false;
     }
   }
 
@@ -190,26 +208,51 @@ export class NetworkControl {
     await this.networkService.deduplicateConfigs();
   }
 
-  // Device Management
-  async updateDeviceAuth(allowedMacs: string[]): Promise<void> {
-    await this.networkService.updateDeviceAuth(allowedMacs);
+  /**
+   * Gets the default configuration ID set for boot
+   */
+  async getDefaultConfig(): Promise<string | null> {
+    return this.networkService.getDefaultConfig();
   }
 
-  async updateDnsConfig(servers: string[]): Promise<void> {
-    await this.networkService.updateDnsConfig(servers);
+  /**
+   * Sets the default configuration to use at boot time
+   */
+  async setDefaultConfig(id: string): Promise<void> {
+    return this.networkService.setDefaultConfig(id);
   }
 
-  // Diagnostics
-  async runDiagnostics(deep = false): Promise<any> {
-    const networkDiag = await this.networkService.runDiagnostics(deep);
-    const vpnStatus = await this.wireguard.getStatus();
-    return {
-      ...networkDiag,
-      vpnStatus
-    };
+  /**
+   * Attempts to reconnect to the last used WiFi network
+   */
+  async reconnectLastWifi(): Promise<boolean> {
+    try {
+      // Get the list of saved network profiles
+      const { stdout } = await executeCommand('nmcli -t -f NAME connection show');
+      const connections = stdout.trim().split('\n');
+      
+      // Try the most recently used connection first
+      for (const connection of connections) {
+        if (connection && connection !== 'lo') {
+          try {
+            console.log(`Attempting to connect to saved network: ${connection}`);
+            await executeCommand(`nmcli connection up "${connection}"`);
+            console.log(`Successfully connected to ${connection}`);
+            return true;
+          } catch (error) {
+            console.log(`Failed to connect to ${connection}`);
+            // Continue with next connection
+          }
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Failed to reconnect to last WiFi:', error);
+      return false;
+    }
   }
 
-  // WireGuard VPN
+  // VPN Management
   async setupWireGuardWithQR(config: {
     endpoint: string;
     allowedIPs: string[];
@@ -481,5 +524,26 @@ export class NetworkControl {
     errors?: string[];
   }> {
     return this.exportImportManager.importWireGuardConfig(filePath);
+  }
+
+  /**
+   * Updates the device authorization settings
+   */
+  async updateDeviceAuth(allowedMacs: string[]): Promise<void> {
+    return this.networkService.updateDeviceAuth(allowedMacs);
+  }
+
+  /**
+   * Updates the DNS configuration
+   */
+  async updateDnsConfig(servers: string[]): Promise<void> {
+    return this.networkService.updateDnsConfig(servers);
+  }
+
+  /**
+   * Runs network diagnostics
+   */
+  async runDiagnostics(deep = false): Promise<any> {
+    return this.networkService.runDiagnostics(deep);
   }
 }
