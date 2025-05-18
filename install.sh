@@ -78,13 +78,18 @@ cd "$APP_DIR"
 
 echo "Working directory: $APP_DIR"
 
-# Install npm dependencies
-echo "\nInstalling npm dependencies..."
-npm install --omit=dev # Install only production dependencies
+# Install npm dependencies (including devDependencies for the build process)
+echo "\\nInstalling npm dependencies (including devDependencies for build)..."
+npm install
 
 # Build the application (compile TypeScript to JavaScript)
-echo "\nBuilding the application..."
+echo "\\nBuilding the application..."
+# The build script in package.json (npx tsc && chmod +x dist/cli.js) will be executed
 npm run build
+
+# Optional: Prune devDependencies after build if a smaller deployment is needed
+# echo "\\nPruning development dependencies..."
+# npm prune --production
 
 # Ensure boot and cli scripts are executable
 if [ -f "dist/boot.js" ]; then
