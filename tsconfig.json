@@ -2,16 +2,18 @@
   "compilerOptions": {
     "target": "es2020",
     "module": "commonjs",
-    "lib": ["es2020"],
+    "lib": ["es2020", "dom"], // Added "dom" for console and other browser-like APIs if needed
     "declaration": true,
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
-    "esModuleInterop": true,
+    "esModuleInterop": true, // Ensures compatibility with CommonJS modules like Node.js built-ins
     "skipLibCheck": true,
+    // Adjusted typeRoots to ensure node_modules/@types is primary
     "typeRoots": ["./node_modules/@types", "./src/types"],
     "forceConsistentCasingInFileNames": true,
-    "downlevelIteration": true
+    "downlevelIteration": true,
+    "resolveJsonModule": true // Added to allow importing JSON files like package.json
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
