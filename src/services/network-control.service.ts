@@ -4,6 +4,7 @@ import { NetworkService } from './network.service';
 import { WireGuardConfig, WireGuardStatus } from '../interfaces/wireguard.interface';
 import { NetworkConfig } from '../utils/config.util';
 import { ExportImportManager } from '../utils/export-import.util';
+import { WiFiNetwork } from '../interfaces/wifi.interface';
 
 export interface NetworkInfo {
   ssid: string;
@@ -25,25 +26,81 @@ export class NetworkControl {
 
   // Network scanning and connection methods
 
-  async scanNetworks(): Promise<NetworkInfo[]> {
+  async scanNetworks(): Promise<WiFiNetwork[]> {
     try {
-      const { stdout } = await executeCommand('nmcli -f SSID,SIGNAL,FREQ,SECURITY device wifi list');
-      return this.parseNmcliOutput(stdout);
-    } catch (error) {
-      console.error('Failed to scan networks:', error);
-      throw error;
+      const command = `nmcli -g SSID,SIGNAL,SECURITY,FREQ device wifi list --rescan yes`;
+
+      const { stdout } = await executeCommand(command);
+
+      const networks: WiFiNetwork[] = [];
+      const outputLines = stdout.split('\n').filter(line => line.trim() !== '');
+
+      for (const line of outputLines) {
+        const fields = line.split(':');
+
+        if (fields.length >= 3) {
+          const ssid = fields[0] ? fields[0].replace(/\\:/g, ':').trim() : '';
+          const signalStrengthStr = fields[1] || '0';
+          const securityString = fields[2] || '';
+          const frequency = fields.length > 3 && fields[3] ? fields[3].replace(/\\:/g, ':').trim() : '';
+
+          if (ssid) {
+            const signal = parseInt(signalStrengthStr, 10);
+            networks.push({
+              ssid: ssid,
+              signal: isNaN(signal) ? 0 : signal,
+              security: securityString.trim() ? securityString.trim().split(/\s+/).filter(s => s) : [],
+              freq: frequency
+            });
+          }
+        }
+      }
+
+      return networks.filter(n => n.ssid);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+
+      console.error('Failed to scan networks:', error.message || error);
+      if (error && error.cmd && typeof error.stdout === 'string') {
+        console.error(`Command was: ${error.cmd}`);
+        console.error(`Command stdout was:\n${error.stdout}`);
+      }
+      if (error && error.cmd && typeof error.stderr === 'string') {
+        console.error(`Command stderr was:\n${error.stderr}`);
+      }
+      return [];
     }
   }
 
   async connect(ssid: string, password?: string): Promise<boolean> {
     try {
-      const command = password 
+      const command = password
         ? `nmcli device wifi connect "${ssid}" password "${password}"`
         : `nmcli device wifi connect "${ssid}"`;
       await executeCommand(command);
       return true;
-    } catch (error) {
-      console.error('Failed to connect:', error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+      console.error('Failed to connect:', error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
       return false;
     }
   }
@@ -52,8 +109,19 @@ export class NetworkControl {
     try {
       await executeCommand('nmcli device disconnect wlan0');
       return true;
-    } catch (error) {
-      console.error('Failed to disconnect:', error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+      console.error('Failed to disconnect:', error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
       return false;
     }
   }
@@ -61,11 +129,21 @@ export class NetworkControl {
   async startHotspot(ssid: string, password: string): Promise<boolean> {
     try {
       await executeCommand(`nmcli device wifi hotspot ssid "${ssid}" password "${password}"`);
-      // Enable hairpin NAT for hotspot mode
       await this.networkService.enableHairpinNAT();
       return true;
-    } catch (error) {
-      console.error('Failed to start hotspot:', error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+      console.error('Failed to start hotspot:', error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
       return false;
     }
   }
@@ -75,16 +153,26 @@ export class NetworkControl {
       const { stdout } = await executeCommand('nmcli connection show --active');
       const hotspotConn = stdout.split('\n')
         .find(line => line.includes('Hotspot'));
-      
+
       if (hotspotConn) {
         const connName = hotspotConn.split(' ')[0];
         await executeCommand(`nmcli connection down "${connName}"`);
-        // Disable hairpin NAT when stopping hotspot
         await this.networkService.disableHairpinNAT();
       }
       return true;
-    } catch (error) {
-      console.error('Failed to stop hotspot:', error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+      console.error('Failed to stop hotspot:', error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
       return false;
     }
   }
@@ -92,81 +180,138 @@ export class NetworkControl {
   async getStatus(): Promise<{
     connected: boolean;
     ssid?: string;
-    mode: string;
+    mode: string; // 'wifi', 'ap', 'ethernet', 'disconnected', 'unknown'
     signal?: number;
     freq?: string;
     bitrate?: string;
     security?: string[];
     ipAddress?: string;
     gateway?: string;
+    macAddress?: string;
+    interfaceName?: string;
   }> {
     try {
-      // Get device status
-      const { stdout: devStatus } = await executeCommand('nmcli device status');
-      const wifiLine = devStatus.split('\n')
-        .find(line => line.includes('wifi'));
-      
-      if (!wifiLine) {
+      const { stdout: devStatusOutput } = await executeCommand('nmcli device status');
+      const wifiDeviceLine = devStatusOutput.split('\n').find(line => line.startsWith('wlan0') || line.startsWith('wifi'));
+
+      if (!wifiDeviceLine) {
+        // Check for ethernet if no wifi line
+        const ethDeviceLine = devStatusOutput.split('\n').find(line => (line.startsWith('eth0') || line.startsWith('ethernet')) && line.includes('connected'));
+        if (ethDeviceLine) {
+          const ethParts = ethDeviceLine.trim().split(/\s{2,}/);
+          const ethInterfaceName = ethParts[0];
+          const ethActiveConnectionName = ethParts.length > 3 ? ethParts.slice(3).join(' ') : 'Ethernet Connection';
+          try {
+            // For ethernet, GENERAL.HWADDR might work on the device, or we get it from ip link
+            let macAddress;
+            try {
+              const { stdout: macStdout } = await executeCommand(`nmcli -g GENERAL.HWADDR dev show ${ethInterfaceName}`);
+              macAddress = macStdout.trim();
+            } catch (macError) {
+              console.warn(`Could not get MAC for ${ethInterfaceName} via nmcli, trying ip link.`);
+              // Fallback to ip link show
+              const { stdout: ipLinkOut } = await executeCommand(`ip -brief link show ${ethInterfaceName}`);
+              const match = ipLinkOut.match(/([0-9a-f]{2}:){5}[0-9a-f]{2}/i);
+              if (match) macAddress = match[0];
+            }
+
+            const { stdout: ipConfig } = await executeCommand(`nmcli -g IP4.ADDRESS,IP4.GATEWAY connection show "${ethActiveConnectionName}"`);
+            const [ipLine, gatewayLine] = ipConfig.split('\n');
+            const ipAddress = ipLine ? ipLine.split('/')[0] : undefined;
+            const gateway = gatewayLine ? gatewayLine.split('/')[0] : undefined;
+            return { connected: true, mode: 'ethernet', ssid: ethActiveConnectionName, ipAddress, gateway, macAddress, interfaceName: ethInterfaceName };
+          } catch (ipError) {
+            console.warn(`Could not get IP details for ethernet connection ${ethActiveConnectionName}:`, ipError);
+            return { connected: true, mode: 'ethernet', ssid: ethActiveConnectionName, interfaceName: ethInterfaceName };
+          }
+        }
         return { connected: false, mode: 'disconnected' };
       }
 
-      const [device, type, state, connection] = wifiLine.split(/\s+/);
-      const isConnected = state === 'connected';
-      
-      if (!isConnected) {
-        return { connected: false, mode: type };
+      const devParts = wifiDeviceLine.trim().split(/\s{2,}/);
+      const interfaceName = devParts[0]; // This should be our wlan0 (or similar)
+      const type = devParts[1];
+      const state = devParts[2];
+      let activeConnectionName = devParts.length > 3 ? devParts.slice(3).join(' ') : undefined;
+
+      const isConnected = state === 'connected' && !!activeConnectionName && activeConnectionName !== '--';
+
+      if (!isConnected || !activeConnectionName) {
+        return { connected: false, mode: type === 'wifi' ? 'disconnected' : type, interfaceName };
       }
 
-      // Get connection details
-      const { stdout: connDetails } = await executeCommand('nmcli -f SIGNAL,FREQ,RATE,SECURITY device wifi list --rescan no');
-      const currentNetwork = connDetails.split('\n')
-        .slice(1)
-        .find(line => line.includes('*'));
+      let signal, freq, bitrate, securityTypes, macAddress;
+      try {
+        const { stdout: activeWifiDetails } = await executeCommand(`nmcli -t -f ACTIVE,SSID,SIGNAL,FREQ,RATE,SECURITY dev wifi list`);
+        const activeLine = activeWifiDetails.split('\n').find(line => line.startsWith('yes:'));
 
-      let signal, freq, bitrate, security;
-      if (currentNetwork) {
-        const [signalStr, freqStr, rateStr, ...securityParts] = currentNetwork.trim().replace('*', '').trim().split(/\s+/);
-        signal = parseInt(signalStr, 10);
-        freq = freqStr;
-        bitrate = rateStr;
-        security = securityParts;
+        if (activeLine) {
+          const parts = activeLine.split(':');
+          // activeConnectionName = parts[1].replace(/\\:/g, ':'); // SSID from this command
+          signal = parseInt(parts[2], 10);
+          freq = parts[3].replace(/\\:/g, ':');
+          bitrate = parts[4];
+          securityTypes = parts[5] ? parts[5].trim().split(/\s+/).filter(s => s) : [];
+        }
+      } catch (wifiDetailsError) {
+        console.warn(`Could not get detailed Wi-Fi info for ${activeConnectionName}:`, wifiDetailsError);
       }
 
-      // Get IP configuration
-      const { stdout: ipConfig } = await executeCommand(`nmcli -g IP4.ADDRESS,IP4.GATEWAY connection show "${connection}"`);
-      const [ipAddress, gateway] = ipConfig.split('\n').map(line => line.split('/')[0]);
-      
+      // Get MAC address for the specific Wi-Fi interface (e.g., wlan0)
+      try {
+        const { stdout: macStdout } = await executeCommand(`nmcli -g GENERAL.HWADDR dev show ${interfaceName}`);
+        macAddress = macStdout.trim();
+      } catch (macError) {
+        console.warn(`Could not get MAC for ${interfaceName} via nmcli dev show, trying ip link.`);
+        try {
+          const { stdout: ipLinkOut } = await executeCommand(`ip -brief link show ${interfaceName}`);
+          const match = ipLinkOut.match(/([0-9a-f]{2}:){5}[0-9a-f]{2}/i);
+          if (match) macAddress = match[0];
+        } catch (ipLinkError) {
+          console.warn(`Failed to get MAC for ${interfaceName} via ip link:`, ipLinkError);
+        }
+      }
+
+      let ipAddress, gateway;
+      try {
+        // Now get IP and Gateway for the connection, without GENERAL.HWADDR
+        const { stdout: ipConfig } = await executeCommand(`nmcli -g IP4.ADDRESS,IP4.GATEWAY connection show "${activeConnectionName}"`);
+        const [ipLine, gatewayLine] = ipConfig.split('\n'); // Expecting two lines
+        ipAddress = ipLine ? ipLine.split('/')[0] : undefined;
+        gateway = gatewayLine ? gatewayLine.split('/')[0] : undefined;
+      } catch (ipError) {
+        console.warn(`Could not get IP details for ${activeConnectionName}:`, ipError);
+      }
+
       return {
         connected: true,
-        ssid: connection !== '--' ? connection : undefined,
-        mode: type,
-        signal,
+        ssid: activeConnectionName.replace(/\\:/g, ':'),
+        mode: 'wifi',
+        signal: isNaN(signal!) ? undefined : signal,
         freq,
         bitrate,
-        security,
+        security: securityTypes,
         ipAddress,
-        gateway
+        gateway,
+        macAddress, // MAC address obtained from 'nmcli dev show'
+        interfaceName
       };
-    } catch (error) {
-      console.error('Failed to get status:', error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+      const error = e as CommandError;
+      console.error('Failed to get status:', error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
+      if (error.stdout) console.error(`Stdout: ${error.stdout}`);
+      if (error.stderr) console.error(`Stderr: ${error.stderr}`);
       return { connected: false, mode: 'unknown' };
     }
-  }
-
-  private parseNmcliOutput(output: string): NetworkInfo[] {
-    const lines = output.split('\n')
-      .slice(1) // Skip header
-      .filter(line => line.trim());
-    
-    return lines.map(line => {
-      const [ssid, signal, freq, ...securityParts] = line.trim().split(/\s+/);
-      return {
-        ssid,
-        signal: parseInt(signal, 10),
-        freq,
-        security: securityParts
-      };
-    });
   }
 
   // Configuration Management
@@ -180,12 +325,10 @@ export class NetworkControl {
       const config = await this.networkService.activateConfig(id);
       if (config.mode === 'hotspot') {
         const result = await this.startHotspot(config.ssid, config.password!);
-        // Update status to indicate we're in hotspot mode
         console.log(`WorkHive: Activated hotspot with SSID: ${config.ssid}`);
         return result;
       } else {
         const result = await this.connect(config.ssid, config.password);
-        // Start VPN if configured
         if (result && config.vpnEnabled) {
           console.log(`WorkHive: Connected to ${config.ssid}, starting VPN...`);
           await this.wireguard.startVPN();
@@ -194,8 +337,19 @@ export class NetworkControl {
         }
         return result;
       }
-    } catch (error) {
-      console.error(`Failed to activate config ${id}:`, error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+      console.error(`Failed to activate config ${id}:`, error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
       return false;
     }
   }
@@ -208,30 +362,19 @@ export class NetworkControl {
     await this.networkService.deduplicateConfigs();
   }
 
-  /**
-   * Gets the default configuration ID set for boot
-   */
   async getDefaultConfig(): Promise<string | null> {
     return this.networkService.getDefaultConfig();
   }
 
-  /**
-   * Sets the default configuration to use at boot time
-   */
   async setDefaultConfig(id: string): Promise<void> {
     return this.networkService.setDefaultConfig(id);
   }
 
-  /**
-   * Attempts to reconnect to the last used WiFi network
-   */
   async reconnectLastWifi(): Promise<boolean> {
     try {
-      // Get the list of saved network profiles
       const { stdout } = await executeCommand('nmcli -t -f NAME connection show');
       const connections = stdout.trim().split('\n');
-      
-      // Try the most recently used connection first
+
       for (const connection of connections) {
         if (connection && connection !== 'lo') {
           try {
@@ -239,15 +382,36 @@ export class NetworkControl {
             await executeCommand(`nmcli connection up "${connection}"`);
             console.log(`Successfully connected to ${connection}`);
             return true;
-          } catch (error) {
-            console.log(`Failed to connect to ${connection}`);
-            // Continue with next connection
+          } catch (e) {
+            interface CommandError extends Error {
+              cmd?: string;
+              stdout?: string;
+              stderr?: string;
+              code?: number;
+              killed?: boolean;
+              signal?: NodeJS.Signals | null;
+            }
+
+            const error = e as CommandError;
+            console.log(`Failed to connect to ${connection}:`, error.message || error);
+            if (error.cmd) console.error(`Command was: ${error.cmd}`);
           }
         }
       }
       return false;
-    } catch (error) {
-      console.error('Failed to reconnect to last WiFi:', error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+      console.error('Failed to reconnect to last WiFi:', error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
       return false;
     }
   }
@@ -272,10 +436,7 @@ export class NetworkControl {
   }
 
   // Connected Devices Management
-  
-  /**
-   * Gets information about all devices connected to the hotspot
-   */
+
   async getConnectedDevices(): Promise<Array<{
     ip: string;
     mac: string;
@@ -283,7 +444,6 @@ export class NetworkControl {
     lastSeen?: string;
   }>> {
     try {
-      // Check if we're in hotspot mode
       const status = await this.getStatus();
       if (!status.connected || status.mode !== 'ap') {
         return [];
@@ -296,22 +456,29 @@ export class NetworkControl {
         lastSeen?: string;
       }> = [];
 
-      // Get device info from the ARP table
       const { stdout: arpOutput } = await executeCommand('arp -a');
       const arpLines = arpOutput.split('\n');
 
-      // Get device info from dnsmasq lease file
       let leaseOutput = '';
       try {
         const { stdout } = await executeCommand('cat /var/lib/misc/dnsmasq.leases');
         leaseOutput = stdout;
-      } catch (error) {
-        // If dnsmasq leases file doesn't exist or can't be read, continue with ARP only
-        console.error('Failed to read DHCP leases:', error);
+      } catch (e) {
+        interface CommandError extends Error {
+          cmd?: string;
+          stdout?: string;
+          stderr?: string;
+          code?: number;
+          killed?: boolean;
+          signal?: NodeJS.Signals | null;
+        }
+
+        const error = e as CommandError;
+        console.error('Failed to read DHCP leases:', error.message || error);
+        if (error.cmd) console.error(`Command was: ${error.cmd}`);
       }
       const leaseLines = leaseOutput.split('\n');
 
-      // Extract devices from ARP table
       for (const line of arpLines) {
         if (!line.includes('wlan0')) continue;
 
@@ -320,16 +487,14 @@ export class NetworkControl {
           const ip = match[1];
           const mac = match[2].toLowerCase();
 
-          // Find hostname from leases if available
           const leaseInfo = leaseLines.find(lease => lease.includes(mac));
           let hostname;
           let lastSeen;
-          
+
           if (leaseInfo) {
             const leaseParts = leaseInfo.split(' ');
             if (leaseParts.length >= 4) {
               hostname = leaseParts[3] !== '*' ? leaseParts[3] : undefined;
-              // Convert lease timestamp to readable date
               const timestamp = parseInt(leaseParts[0]);
               if (!isNaN(timestamp)) {
                 lastSeen = new Date(timestamp * 1000).toLocaleString();
@@ -347,15 +512,23 @@ export class NetworkControl {
       }
 
       return devices;
-    } catch (error) {
-      console.error('Failed to get connected devices:', error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+      console.error('Failed to get connected devices:', error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
       return [];
     }
   }
 
-  /**
-   * Gets detailed information about a specific device
-   */
   async getDeviceDetails(ip: string): Promise<{
     ip: string;
     mac?: string;
@@ -382,39 +555,69 @@ export class NetworkControl {
         signalStrength?: string;
       } = { ip };
 
-      // Try to get MAC address
       try {
         const { stdout: arpOutput } = await executeCommand(`arp -a | grep ${ip}`);
         const macMatch = arpOutput.match(/at\s+([0-9a-f:]+)/i);
         if (macMatch) {
           details.mac = macMatch[1].toLowerCase();
         }
-      } catch (error) {
-        // Continue even if we can't get MAC
+      } catch (e) {
+        interface CommandError extends Error {
+          cmd?: string;
+          stdout?: string;
+          stderr?: string;
+          code?: number;
+          killed?: boolean;
+          signal?: NodeJS.Signals | null;
+        }
+
+        const error = e as CommandError;
+        console.error('Failed to get MAC address:', error.message || error);
+        if (error.cmd) console.error(`Command was: ${error.cmd}`);
       }
 
-      // Try to get hostname
       try {
         const { stdout } = await executeCommand(`nslookup ${ip} | grep name`);
         const nameMatch = stdout.match(/name\s*=\s*([^\s\.]+)/);
         if (nameMatch) {
           details.hostname = nameMatch[1];
         }
-      } catch (error) {
-        // Continue even if we can't get hostname
+      } catch (e) {
+        interface CommandError extends Error {
+          cmd?: string;
+          stdout?: string;
+          stderr?: string;
+          code?: number;
+          killed?: boolean;
+          signal?: NodeJS.Signals | null;
+        }
+
+        const error = e as CommandError;
+        console.error('Failed to get hostname:', error.message || error);
+        if (error.cmd) console.error(`Command was: ${error.cmd}`);
       }
 
-      // Try to get ping response
       try {
         const { stdout } = await executeCommand(`ping -c 3 -W 1 ${ip}`);
         details.pingResponse = stdout.split('\n')
           .filter(line => line.includes('transmitted') || line.includes('min/avg/max'))
           .join('\n');
-      } catch (error) {
+      } catch (e) {
+        interface CommandError extends Error {
+          cmd?: string;
+          stdout?: string;
+          stderr?: string;
+          code?: number;
+          killed?: boolean;
+          signal?: NodeJS.Signals | null;
+        }
+
+        const error = e as CommandError;
+        console.error('Failed to get ping response:', error.message || error);
+        if (error.cmd) console.error(`Command was: ${error.cmd}`);
         details.pingResponse = 'No response';
       }
 
-      // Try to get signal strength for this device (if available)
       try {
         const { stdout } = await executeCommand(`iw dev wlan0 station dump | grep -A 15 ${details.mac || ''}`);
         const signalMatch = stdout.match(/signal:\s+(-\d+)/);
@@ -430,11 +633,21 @@ export class NetworkControl {
           const remainingSeconds = seconds % 60;
           details.connectionTime = `${hours}h ${minutes}m ${remainingSeconds}s`;
         }
-      } catch (error) {
-        // Continue even if we can't get signal strength
+      } catch (e) {
+        interface CommandError extends Error {
+          cmd?: string;
+          stdout?: string;
+          stderr?: string;
+          code?: number;
+          killed?: boolean;
+          signal?: NodeJS.Signals | null;
+        }
+
+        const error = e as CommandError;
+        console.error('Failed to get signal strength:', error.message || error);
+        if (error.cmd) console.error(`Command was: ${error.cmd}`);
       }
 
-      // Check for open ports
       try {
         const { stdout } = await executeCommand(`sudo nmap -sS -T4 -p 22,53,80,443,8080 ${ip}`);
         const openPorts = [];
@@ -445,62 +658,104 @@ export class NetworkControl {
         if (openPorts.length > 0) {
           details.openPorts = openPorts;
         }
-      } catch (error) {
-        // Continue even if nmap fails
+      } catch (e) {
+        interface CommandError extends Error {
+          cmd?: string;
+          stdout?: string;
+          stderr?: string;
+          code?: number;
+          killed?: boolean;
+          signal?: NodeJS.Signals | null;
+        }
+
+        const error = e as CommandError;
+        console.error('Failed to get open ports:', error.message || error);
+        if (error.cmd) console.error(`Command was: ${error.cmd}`);
       }
 
-      // Get network activity
       try {
         const { stdout } = await executeCommand(`sudo tcpdump -i wlan0 -n src host ${ip} -c 5 -t`);
         details.networkActivity = stdout;
-      } catch (error) {
-        // Continue even if tcpdump fails
+      } catch (e) {
+        interface CommandError extends Error {
+          cmd?: string;
+          stdout?: string;
+          stderr?: string;
+          code?: number;
+          killed?: boolean;
+          signal?: NodeJS.Signals | null;
+        }
+
+        const error = e as CommandError;
+        console.error('Failed to get network activity:', error.message || error);
+        if (error.cmd) console.error(`Command was: ${error.cmd}`);
       }
 
-      // Get DHCP information
       if (details.mac) {
         try {
           const { stdout } = await executeCommand(`cat /var/lib/misc/dnsmasq.leases | grep ${details.mac}`);
           if (stdout) {
             details.dhcpInfo = stdout;
           }
-        } catch (error) {
-          // Continue even if we can't get DHCP info
+        } catch (e) {
+          interface CommandError extends Error {
+            cmd?: string;
+            stdout?: string;
+            stderr?: string;
+            code?: number;
+            killed?: boolean;
+            signal?: NodeJS.Signals | null;
+          }
+
+          const error = e as CommandError;
+          console.error('Failed to get DHCP info:', error.message || error);
+          if (error.cmd) console.error(`Command was: ${error.cmd}`);
         }
       }
 
       return details;
-    } catch (error) {
-      console.error(`Failed to get details for device ${ip}:`, error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+      console.error(`Failed to get details for device ${ip}:`, error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
       return { ip };
     }
   }
 
-  /**
-   * Gets the hotspot password for the active hotspot connection
-   */
   async getHotspotPassword(ssid: string): Promise<string | undefined> {
     try {
       const { stdout } = await executeCommand(`nmcli -s -g 802-11-wireless-security.psk connection show "${ssid}"`);
       return stdout.trim();
-    } catch (error) {
-      console.error('Failed to get hotspot password:', error);
+    } catch (e) {
+      interface CommandError extends Error {
+        cmd?: string;
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        killed?: boolean;
+        signal?: NodeJS.Signals | null;
+      }
+
+      const error = e as CommandError;
+      console.error('Failed to get hotspot password:', error.message || error);
+      if (error.cmd) console.error(`Command was: ${error.cmd}`);
       return undefined;
     }
   }
 
-  // Export and Import
-  
-  /**
-   * Exports network configurations to a file
-   */
   async exportNetworkConfigs(fileName?: string): Promise<string> {
     return this.exportImportManager.exportNetworkConfigs(fileName);
   }
 
-  /**
-   * Imports network configurations from a file
-   */
   async importNetworkConfigs(filePath: string): Promise<{
     success: boolean;
     imported: number;
@@ -509,16 +764,10 @@ export class NetworkControl {
     return this.exportImportManager.importNetworkConfigs(filePath);
   }
 
-  /**
-   * Exports WireGuard configuration to a file
-   */
   async exportWireGuardConfig(fileName?: string): Promise<string | null> {
     return this.exportImportManager.exportWireGuardConfig(fileName);
   }
 
-  /**
-   * Imports WireGuard configuration from a file
-   */
   async importWireGuardConfig(filePath: string): Promise<{
     success: boolean;
     errors?: string[];
@@ -526,23 +775,14 @@ export class NetworkControl {
     return this.exportImportManager.importWireGuardConfig(filePath);
   }
 
-  /**
-   * Updates the device authorization settings
-   */
   async updateDeviceAuth(allowedMacs: string[]): Promise<void> {
     return this.networkService.updateDeviceAuth(allowedMacs);
   }
 
-  /**
-   * Updates the DNS configuration
-   */
   async updateDnsConfig(servers: string[]): Promise<void> {
     return this.networkService.updateDnsConfig(servers);
   }
 
-  /**
-   * Runs network diagnostics
-   */
   async runDiagnostics(deep = false): Promise<any> {
     return this.networkService.runDiagnostics(deep);
   }

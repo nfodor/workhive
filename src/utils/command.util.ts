@@ -1,16 +1,25 @@
 import { exec } from 'child_process';
-import { promisify } from 'util';
 
-const execAsync = promisify(exec);
-
-export async function executeCommand(command: string, throwOnError = true): Promise<{ stdout: string; stderr: string }> {
-  try {
-    const { stdout, stderr } = await execAsync(command);
-    return { stdout, stderr };
-  } catch (error: any) {
-    if (throwOnError) {
-      throw new Error(`Command execution failed: ${error.message}`);
-    }
-    return { stdout: '', stderr: error.message };
-  }
+/**
+ * Execute a shell command
+ * @param command The command to execute
+ * @param throwOnError Whether to throw an error on command failure (defaults to true)
+ * @returns Promise with stdout and stderr
+ */
+export async function executeCommand(
+  command: string,
+  throwOnError = true
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    exec(command, { shell: '/bin/bash' }, (error, stdout, stderr) => {
+      if (error && throwOnError) {
+        reject(error);
+      } else {
+        resolve({
+          stdout: stdout.trim(),
+          stderr: stderr ? stderr.trim() : ''
+        });
+      }
+    });
+  });
 }

@@ -1,7 +1,8 @@
 export interface WiFiNetwork {
   ssid: string;
   signal: number;
-  security: string[];
+  security: string[]; // This will be an array of security protocols like ["WPA2", "PSK"]
+  freq?: string;     // Frequency, e.g., "2412 MHz"
 }
 
 export interface WiFiConnectionConfig {

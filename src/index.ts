@@ -2,6 +2,7 @@ import { NetworkControl } from './services/network-control.service';
 import { generateSignalBars, generateNetworkQR, generateWireGuardQR } from './utils/display.util';
 import { executeCommand } from './utils/command.util';
 import readline from 'readline';
+import { showDynamicMultiPageStatusScreen } from './tui'; // Import the TUI function
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -21,7 +22,7 @@ async function displayMenu(): Promise<void> {
   console.log('3. Disconnect');
   console.log('4. Start hotspot');
   console.log('5. Stop hotspot');
-  console.log('6. Show current status');
+  console.log('6. Show current status (TUI)'); // Modified menu item
   console.log('7. Setup WireGuard VPN');
   console.log('0. Exit');
 }
@@ -49,7 +50,7 @@ async function main() {
         case '2': {
           console.log('\nScanning for networks...');
           const networks = await networkControl.scanNetworks();
-          
+
           if (networks.length === 0) {
             console.log('No networks found.');
             break;
@@ -109,50 +110,9 @@ async function main() {
         }
 
         case '6': {
-          console.log('\n=== WiFi Status ===');
-          const status = await networkControl.getStatus();
-          const vpnStatus = await networkControl.getWireGuardStatus();
-          
-          if (!status.connected) {
-            console.log('Status: Disconnected');
-            console.log('Mode:', status.mode);
-          } else {
-            console.log('Status: Connected');
-            console.log('SSID:', status.ssid);
-            console.log('Mode:', status.mode);
-            
-            if (status.signal) {
-              const signalBars = generateSignalBars(status.signal);
-              console.log(`Signal Strength: ${signalBars} (${status.signal}%)`);
-            }
-            
-            if (status.freq) console.log('Frequency:', status.freq);
-            if (status.bitrate) console.log('Bitrate:', status.bitrate);
-            if (status.security?.length) console.log('Security:', status.security.join(', '));
-            if (status.ipAddress) console.log('IP Address:', status.ipAddress);
-            if (status.gateway) console.log('Gateway:', status.gateway);
-
-            // Only show QR code in hotspot mode
-            if (status.mode === 'ap' && status.ssid) {
-              console.log('\nNetwork Share QR Code:');
-              // Get the hotspot password from the active connection
-              const { stdout: connInfo } = await executeCommand(`nmcli connection show "${status.ssid}" | grep 802-11-wireless-security.psk:`);
-              const password = connInfo.split(':')[1]?.trim();
-              if (password) {
-                console.log('Scan to connect:');
-                await generateNetworkQR(status.ssid, password);
-              }
-            }
-          }
-
-          if (vpnStatus.active) {
-            console.log('\n=== VPN Status ===');
-            console.log('Status: Connected');
-            if (vpnStatus.endpoint) console.log('Endpoint:', vpnStatus.endpoint);
-            if (vpnStatus.transferRx) console.log('Data Received:', vpnStatus.transferRx);
-            if (vpnStatus.transferTx) console.log('Data Sent:', vpnStatus.transferTx);
-            if (vpnStatus.lastHandshake) console.log('Last Handshake:', vpnStatus.lastHandshake);
-          }
+          console.clear(); // Clear console before showing TUI
+          await showDynamicMultiPageStatusScreen(networkControl);
+          console.log('\nReturning to main menu...'); // Optional: message after TUI closes
           break;
         }
 
@@ -161,7 +121,7 @@ async function main() {
           const endpoint = await question('Enter VPN server endpoint (e.g., vpn.example.com:51820): ');
           const allowedIPs = (await question('Enter allowed IPs (comma separated, e.g., 10.0.0.0/24,192.168.0.0/24): ')).split(',');
           const dns = await question('Enter DNS server (optional): ');
-          
+
           const result = await networkControl.setupWireGuardWithQR({
             endpoint,
             allowedIPs,
